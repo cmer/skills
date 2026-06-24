@@ -15,7 +15,7 @@ This repo is a Claude Code plugin marketplace. Add it once:
 Then install any of the skills below:
 
 ```
-/plugin install <skill-name>
+/plugin install <skill-name>@cmer-skills
 ```
 
 ## Skills
@@ -29,7 +29,7 @@ Then install any of the skills below:
 Scaffolds a shadcn-backed design system into a React + Tailwind v4 codebase: initializes or reuses shadcn, optionally applies a shadcn preset, installs a baseline set of official shadcn components, adds a live reference page at `/admin/design-system`, and writes managed instructions in `AGENTS.md`/`CLAUDE.md` so future agents use shadcn as the source of truth.
 
 ```
-/plugin install design-system
+/plugin install design-system@cmer-skills
 ```
 
 ## License

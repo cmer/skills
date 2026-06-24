@@ -1,12 +1,12 @@
 {
-  "name": "skills",
+  "name": "cmer-skills",
   "owner": {
     "name": "Carl Mercier",
     "email": "foss@carlmercier.com"
   },
   "metadata": {
     "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier.",
-    "version": "1.0.1"
+    "version": "1.0.2"
   },
   "plugins": [
     {
