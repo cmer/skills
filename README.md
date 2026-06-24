@@ -21,6 +21,7 @@ Then install any of the skills below:
 ## Skills
 
 - [**Design System**](#design-system) — Scaffold a shadcn-backed React + Tailwind v4 design-system reference page and agent guardrails.
+- [**Orchestrator Setup**](#orchestrator-setup) — Configure Rails projects for agent orchestrators with isolated worktrees, databases, ports, and lifecycle hooks.
 
 ### Design System
 
@@ -30,6 +31,16 @@ Scaffolds a shadcn-backed design system into a React + Tailwind v4 codebase: ini
 
 ```
 /plugin install design-system@cmer-skills
+```
+
+### Orchestrator Setup
+
+`orchestrator-setup`
+
+Configures a Rails project for agent orchestrators including Conductor, Paseo, Superset, Superconductor, Orca, and others. It detects existing workspace conventions, creates or updates orchestrator config files, scaffolds optional `bin/orchestrator/` lifecycle scripts, handles database isolation, manages dev-server ports, and documents the resulting setup for future agents.
+
+```
+/plugin install orchestrator-setup@cmer-skills
 ```
 
 ## License
