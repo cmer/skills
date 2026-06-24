@@ -1,0 +1,52 @@
+# Workspace-aware database.yml for Rails.
+#
+# This file does NOT know about individual orchestrators. It reads a single
+# generic workspace name from:
+#   1. ENV["MYAPP_WORKSPACE_NAME"]  (set by bin/orchestrator/setup)
+#   2. tmp/WORKSPACE_NAME file      (persisted by bin/orchestrator/setup)
+#
+# When a workspace is active, databases are named:
+#   myapp_<workspace>_development
+#   myapp_<workspace>_test
+#
+# When no workspace is active (running outside an orchestrator), databases
+# use the shared names:
+#   myapp_development
+#   myapp_test
+#
+# To adapt for your project:
+#   1. Replace "myapp" with your project name everywhere.
+#   2. Replace MYAPP_WORKSPACE_NAME with your project's env var.
+#   3. Adjust the default adapter/pool/host/credentials for your setup.
+#   4. Add or remove database entries (cable, queue, etc.) as needed.
+
+<%
+workspace_name_file = File.expand_path("tmp/WORKSPACE_NAME", ENV.fetch("PWD"))
+workspace_name = ENV["MYAPP_WORKSPACE_NAME"]
+workspace_name = File.read(workspace_name_file).strip if workspace_name.to_s.empty? && File.file?(workspace_name_file)
+workspace_name = nil if workspace_name&.empty?
+workspace = ["myapp", workspace_name].compact.join("_")
+%>
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  username: <%= ENV.fetch("PG_USER", "postgres") %>
+  <% if RUBY_PLATFORM =~ /darwin/ %>gssencmode: disable<% end %>
+
+dev: &dev
+  <<: *default
+  host: <%= ENV.fetch("PG_HOST", "localhost") %>
+  password: <%= ENV.fetch("PG_PASSWORD", "password") %>
+
+development:
+  <<: *dev
+  database: <%= workspace %>_development
+
+test:
+  <<: *dev
+  database: <%= workspace %>_test<%= ENV['TEST_ENV_NUMBER'] %>
+
+production:
+  <<: *default
+  url: <%= ENV["DATABASE_URL"] %>

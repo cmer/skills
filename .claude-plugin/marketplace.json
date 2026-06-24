@@ -5,7 +5,8 @@
     "email": "foss@carlmercier.com"
   },
   "metadata": {
-    "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier."
+    "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier.",
+    "version": "1.0.1"
   },
   "plugins": [
     {
@@ -19,6 +20,18 @@
       "homepage": "https://github.com/cmer",
       "category": "design",
       "tags": ["design", "design-system", "ui", "shadcn"]
+    },
+    {
+      "name": "orchestrator-setup",
+      "source": "./plugins/orchestrator-setup",
+      "description": "Configure a Rails project for agent orchestrators (Conductor, Superset, Superconductor, Orca, Paseo, and others).",
+      "author": {
+        "name": "Carl Mercier",
+        "email": "foss@carlmercier.com"
+      },
+      "homepage": "https://github.com/cmer",
+      "category": "devops",
+      "tags": ["worktree", "orchestration", "agent", "devops", "workspace"]
     }
   ]
 }
