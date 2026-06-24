@@ -5,10 +5,15 @@
 #/ Called by orchestrators during their setup lifecycle hook.
 #/
 #/ To adapt for your project:
-#/   1. Replace MYAPP_WORKSPACE_NAME with your project's env var.
-#/   2. Adjust dependency install commands for your project.
-#/   3. Adjust database setup commands for your ORM/migration tool.
-#/   4. Add any project-specific setup steps (seed data, asset compilation, etc.).
+#/   1. If config/database.yml already derives names from the git worktree
+#/      folder or .git pointer file, delete the persist_workspace_name call,
+#/      MYAPP_WORKSPACE_NAME export, and unresolved-workspace guard below. Rails
+#/      will target this worktree's DB.
+#/   2. For the env/file database.yml scheme, replace MYAPP_WORKSPACE_NAME with
+#/      your project's env var.
+#/   3. Adjust dependency install commands for your project.
+#/   4. Adjust database setup commands for your ORM/migration tool.
+#/   5. Add any project-specific setup steps (seed data, asset compilation, etc.).
 
 set -e
 cd "$(dirname "$0")/../.."
@@ -16,12 +21,16 @@ cd "$(dirname "$0")/../.."
 
 workspace_name="$(persist_workspace_name 2>/dev/null || true)"
 
+# Env/file database.yml scheme only. Remove this guard when database.yml
+# self-isolates from the git worktree folder or .git pointer file.
 if [ -z "$workspace_name" ] && workspace_detection_present; then
   echo "ERROR: running inside an orchestrator but could not resolve the workspace name." >&2
   echo "Refusing to set up the shared database from a managed worktree." >&2
   exit 1
 fi
 
+# Env/file database.yml scheme only. Remove this export when database.yml
+# self-isolates from the git worktree folder or .git pointer file.
 if [ -n "$workspace_name" ]; then
   export MYAPP_WORKSPACE_NAME="$workspace_name"
 fi

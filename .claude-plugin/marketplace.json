@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier.",
-    "version": "1.0.3"
+    "version": "1.0.4"
   },
   "plugins": [
     {

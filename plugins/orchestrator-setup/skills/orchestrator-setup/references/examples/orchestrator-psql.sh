@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # Connects to this workspace's Postgres database with psql.
 #
-# Resolves the database name the same way config/database.yml does. Managed
-# worktrees use myapp_<workspace>_development; other environments use the
-# shared myapp_development database.
+# Resolves the database name by evaluating config/database.yml, so this helper
+# stays correct whether the project uses the env/file scheme or derives database
+# names from the git worktree folder / .git pointer file.
 #
 # Usage:
 #   bin/orchestrator/psql                                       # interactive shell
@@ -11,13 +11,15 @@
 #   bin/orchestrator/psql --csv -c "…" > out.csv                # CSV export
 #
 # To adapt for your project:
-#   1. Replace myapp with your project name (matches workspace_database_name).
-#   2. Adjust PG_USER/PG_HOST/PG_PASSWORD defaults for your setup.
+#   1. Adjust PG_USER/PG_HOST/PG_PASSWORD defaults for your setup.
+#   2. If your database.yml needs Rails constants, replace the Ruby one-liner
+#      with `bin/rails runner` or another project-authoritative lookup.
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
-. "$DIR/env"
+cd "$(dirname "$0")/../.."
 
-db="$(workspace_database_name development)"
+db="$(
+  ruby -ryaml -rerb -e 'print YAML.safe_load(ERB.new(File.read("config/database.yml")).result, aliases: true).fetch("development").fetch("database")'
+)"
 
 PGUSER="${PG_USER:-postgres}" \
 PGHOST="${PG_HOST:-localhost}" \

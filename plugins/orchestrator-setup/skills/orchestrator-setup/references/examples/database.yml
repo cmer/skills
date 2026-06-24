@@ -1,5 +1,10 @@
 # Workspace-aware database.yml for Rails.
 #
+# Use this template only when the existing config/database.yml has fixed names
+# and does not already isolate per git worktree. If the project already derives
+# database names from the worktree folder, the .git pointer file, or an existing
+# *_WORKSPACE_NAME/tmp/WORKSPACE_NAME scheme, preserve that file instead.
+#
 # This file does NOT know about individual orchestrators. It reads a single
 # generic workspace name from:
 #   1. ENV["MYAPP_WORKSPACE_NAME"]  (set by bin/orchestrator/setup)

@@ -33,6 +33,11 @@ Confirm this is a Rails application by checking for `Gemfile`, `config/routes.rb
 Detect:
 
 - **Database adapter** — check `config/database.yml` for `adapter:` (postgresql, mysql2, sqlite3). PostgreSQL is expected for workspace isolation.
+- **Database isolation scheme** — inspect `config/database.yml` for existing workspace/worktree-aware database names. Report one of:
+  - `git-worktree-folder`: ERB reads the `.git` pointer file (`gitdir: .../.git/worktrees/<name>`), current worktree folder, or related path/basename data to derive distinct database names per worktree.
+  - `workspace-env-file`: ERB reads a project env var such as `*_WORKSPACE_NAME`, `tmp/WORKSPACE_NAME`, or both.
+  - `fixed`: database names are static, stock Rails names and are not isolated per worktree.
+  - `unknown`: ERB is complex enough that you cannot confidently classify it; treat it as user-owned and ask before changing it.
 - **Dev server command** — look for `Procfile.dev`, `bin/dev`, or a Foreman/Overmind setup.
 - **Frontend bundler** — Vite (`vite.config.*`), Webpacker, esbuild, or Propshaft. Determines whether additional ports are needed (e.g., Vite dev server).
 - **Setup/teardown scripts** — look for `bin/setup`, `bin/orchestrator/setup`, `bin/orchestrator/teardown` (or legacy `bin/workspace-setup`, `bin/workspace-teardown`).
@@ -125,10 +130,12 @@ Add gitignore entries for generated files that should not be committed:
 ```gitignore
 # Orchestrator-generated files (workspace-specific, not committed)
 .superset/ports.json
+
+# Only for the env/file database scheme
 tmp/WORKSPACE_NAME
 ```
 
-Only add entries for orchestrators that are being configured. Check if the entries already exist before adding.
+Only add entries for generated files the chosen configuration will actually create. Add `tmp/WORKSPACE_NAME` only when using the env/file database scheme; a preserved git-worktree-folder `database.yml` does not need that file. Check if the entries already exist before adding.
 
 ## Phase 5 — Scaffold workspace detection and lifecycle scripts
 
@@ -167,14 +174,14 @@ The script provides these shell functions:
 | `workspace_detection_present` | Returns true if any orchestrator detection var is set |
 | `workspace_needs_port_allocation` | Returns true if the active orchestrator requires project-managed ports |
 | `workspace_path` | Returns the workspace root path |
-| `workspace_database_prefix` | Returns `<project>_<workspace>` or just `<project>` |
-| `workspace_database_name ENV` | Returns full database name like `<project>_<workspace>_development` |
-| `persist_workspace_name` | Writes workspace name to `tmp/WORKSPACE_NAME` |
+| `workspace_database_prefix` | Optional: returns `<project>_<workspace>` or just `<project>` for the env/file database scheme |
+| `workspace_database_name ENV` | Optional: returns full database name like `<project>_<workspace>_development` for the env/file database scheme |
+| `persist_workspace_name` | Optional for the env/file database scheme: writes workspace name to `tmp/WORKSPACE_NAME` |
 
 Key design principles:
 
 - **Workspace name resolution order**: persisted file (`tmp/WORKSPACE_NAME`) → orchestrator env vars → `basename "$PWD"` when an orchestrator is detected. The persisted file takes priority because orchestrator env vars may not be present in every shell context or after scripts are run outside an orchestrator-provided environment.
-- **Database config isolation**: `config/database.yml` reads a single project-level env var (e.g., `MYAPP_WORKSPACE_NAME`) and `tmp/WORKSPACE_NAME`. It does not know about individual orchestrators. `bin/orchestrator/setup` bridges the gap by exporting the project env var after resolving the orchestrator-specific one.
+- **Database config isolation**: if `config/database.yml` already derives names per worktree, preserve it and do not add shell database-name helpers that reimplement a different naming rule. If the project has stock fixed names, use the env/file pattern where `config/database.yml` reads a single project-level env var (e.g., `MYAPP_WORKSPACE_NAME`) and `tmp/WORKSPACE_NAME`; `bin/orchestrator/setup` bridges the gap by exporting the project env var after resolving the orchestrator-specific one.
 - **Port allocation policy**: `workspace_needs_port_allocation` returns true only for orchestrators that don't provide ports (Superset, Superconductor, Orca). Conductor and Paseo provide ports directly.
 
 Only include detection checks for orchestrators the project actually supports. Remove the others.
@@ -186,8 +193,8 @@ Only include detection checks for orchestrators the project actually supports. R
 Called by orchestrators during their setup lifecycle hook. Must be idempotent. Steps:
 
 1. Sources `bin/orchestrator/env`
-2. Calls `persist_workspace_name` to write `tmp/WORKSPACE_NAME`
-3. Exports `<PROJECT>_WORKSPACE_NAME` so Rails reads it in `config/database.yml`
+2. For the env/file database scheme: calls `persist_workspace_name` to write `tmp/WORKSPACE_NAME`, refuses to continue inside a detected orchestrator if the workspace name cannot be resolved, and exports `<PROJECT>_WORKSPACE_NAME` so Rails reads it in `config/database.yml`
+3. For an existing git-worktree-folder database scheme: skip the workspace-name export and unresolved-name guard; `bin/rails db:prepare` already targets the database for the current worktree
 4. Allocates a port block if `workspace_needs_port_allocation` returns true
 5. Installs dependencies (`bundle install`, plus JS bundler if present)
 6. Prepares databases: `bin/rails db:prepare` for development, `RAILS_ENV=test bin/rails db:prepare` for test
@@ -199,9 +206,10 @@ Called by orchestrators during their setup lifecycle hook. Must be idempotent. S
 Called by orchestrators during their teardown/archive lifecycle hook. Steps:
 
 1. Sources `bin/orchestrator/env`
-2. Resolves workspace name and exports `<PROJECT>_WORKSPACE_NAME`
-3. Drops each workspace database (development, test) with error recovery — individual drop failures should warn, not abort
-4. Releases the port block if `workspace_needs_port_allocation` returns true
+2. For the env/file database scheme: resolves workspace name and exports `<PROJECT>_WORKSPACE_NAME`
+3. For an existing git-worktree-folder database scheme: do not require a workspace name; instead refuse to run in the main checkout where `.git` is a directory, because that checkout owns the primary dev/test databases
+4. Drops each workspace database (development, test) with error recovery — individual drop failures should warn, not abort
+5. Releases the port block if `workspace_needs_port_allocation` returns true
 
 ## Phase 6 — Configure ports, database, and dev server
 
@@ -245,7 +253,16 @@ Key implementation details:
 
 **Example**: `references/examples/database.yml`
 
-The critical pattern: `config/database.yml` uses ERB to construct workspace-isolated database names without knowing about any specific orchestrator.
+Treat `config/database.yml` as a decision, not a rewrite target.
+
+If Phase 0 found an existing scheme that yields distinct development/test database names per worktree, preserve it. This includes either:
+
+- a git-worktree-folder scheme that derives the database suffix from the current worktree, commonly by reading the `.git` pointer file (`gitdir: <repo>/.git/worktrees/<wt>`) or current folder name, or
+- an env/file scheme that already reads `*_WORKSPACE_NAME`, `tmp/WORKSPACE_NAME`, or equivalent workspace state.
+
+All selected orchestrators in this skill create git worktrees, so folder-based derivation already isolates their databases. It needs no env var bridging, no `tmp/WORKSPACE_NAME`, and no setup-hook ordering to make Rails commands pick the right database. That is simpler and less fragile when every workspace is a git worktree.
+
+Only apply the example ERB pattern when `database.yml` is fixed/static and does not already isolate per worktree. The blank-slate pattern makes `config/database.yml` construct workspace-isolated database names without knowing about any specific orchestrator:
 
 ```yaml
 <%
@@ -267,6 +284,11 @@ The ERB block reads from two sources in order:
 2. `tmp/WORKSPACE_NAME` — persisted file, used when the env var isn't available (e.g., running `rails console` directly)
 
 All database entries (`development`, `test`) use `<%= workspace %>_<environment>` for their database name. Production/staging entries use `DATABASE_URL` and are unaffected.
+
+Strategy comparison:
+
+- **Git-worktree-folder derivation**: database names come from the worktree path/folder or `.git` pointer. Prefer preserving this when already present. It works for Conductor, Superconductor, Superset, Orca, Paseo, and any other git-worktree-based tool without setup env bridging.
+- **`WORKSPACE_NAME` env/file derivation**: database names come from a project env var plus optional `tmp/WORKSPACE_NAME`. Use this for stock Rails templates or for orchestrators that do not expose a stable worktree folder. It requires setup/teardown scripts and shell helpers to export the same project env var before Rails commands that depend on it.
 
 ### 6d. Dev server script — `bin/dev`
 
@@ -294,14 +316,14 @@ vite: npx vite --port $VITE_PORT
 
 **Example**: `references/examples/orchestrator-psql.sh`
 
-Convenience script that connects to the correct workspace database without needing to remember the name. Uses `workspace_database_name development` from `bin/orchestrator/env`.
+Convenience script that connects to the correct workspace database without needing to remember the name. Do not re-derive the database name in shell unless the project uses the matching env/file naming scheme. Prefer asking Rails/database.yml for the authoritative name, as shown in `references/examples/orchestrator-psql.sh`; this works for both preserved worktree-aware configs and the blank-slate env/file template.
 
 ## Phase 7 — Update documentation
 
 Update `CLAUDE.md` and/or `AGENTS.md` with orchestrator information:
 
 1. List which orchestrators are supported and their detection env vars.
-2. Document the workspace database naming convention.
+2. Document the workspace database naming convention and whether the project uses git-worktree-folder or `WORKSPACE_NAME` env/file derivation.
 3. Document dev server startup and port discovery for each orchestrator.
 4. Document any orchestrator-specific quirks (e.g., Orca needs manual dev server start).
 
@@ -346,7 +368,8 @@ Run through every item before reporting done:
 - [ ] (Phase 6) Ports, database, and dev server configured
   - [ ] `bin/orchestrator/dev-port` — port resolution chain for all configured orchestrators
   - [ ] `bin/orchestrator/port` — port block allocation (if any orchestrator requires it)
-  - [ ] `config/database.yml` made workspace-aware with ERB pattern
+  - [ ] `config/database.yml` made workspace-aware OR confirmed an existing per-worktree scheme and left it intact
+  - [ ] `bin/orchestrator/setup`, `bin/orchestrator/teardown`, and `bin/orchestrator/psql` match the chosen database isolation scheme
   - [ ] `bin/dev` — port resolution, env var export, process manager startup
   - [ ] `Procfile.dev` — services read ports from env vars
   - [ ] `bin/orchestrator/psql` — optional database helper

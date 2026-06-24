@@ -8,7 +8,11 @@
 # To adapt for your project:
 #   1. Replace MYAPP with your project name (env var prefix and db prefix).
 #   2. Add or remove orchestrator detection vars to match your configuration.
-#   3. Update workspace_database_prefix to use your project's db naming.
+#   3. If config/database.yml already derives names from the git worktree
+#      folder or .git pointer file, omit the database-name helpers below or
+#      replace them with an authoritative Rails/database.yml lookup.
+#   4. For the env/file database.yml scheme, update workspace_database_prefix
+#      to use your project's db naming.
 
 # --- Workspace name file ---
 
@@ -85,6 +89,12 @@ workspace_path() {
 # Constructs workspace-isolated database names.
 # Pattern: <project>_<workspace>_<environment>
 # Without workspace: <project>_<environment>
+#
+# Keep these helpers only when config/database.yml uses the matching env/file
+# naming scheme. Some Rails templates derive names from the git worktree folder
+# and may use a different order, such as <project>_<environment>_<worktree>.
+# In that case, do not reimplement the name in shell; ask Rails/database.yml for
+# the final value in any script that needs it.
 
 workspace_database_prefix() {
   if name="$(workspace_name 2>/dev/null)"; then
