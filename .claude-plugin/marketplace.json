@@ -1,0 +1,24 @@
+{
+  "name": "skills",
+  "owner": {
+    "name": "Carl Mercier",
+    "email": "foss@carlmercier.com"
+  },
+  "metadata": {
+    "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier."
+  },
+  "plugins": [
+    {
+      "name": "design-system",
+      "source": "./plugins/design-system",
+      "description": "Scaffold and maintain a shadcn-backed design-system reference page and agent guardrails.",
+      "author": {
+        "name": "Carl Mercier",
+        "email": "foss@carlmercier.com"
+      },
+      "homepage": "https://github.com/cmer",
+      "category": "design",
+      "tags": ["design", "design-system", "ui", "shadcn"]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Skills
+
+A public, open-source Claude Code plugin marketplace maintained by Carl Mercier.
+
+Contact: [foss@carlmercier.com](mailto:foss@carlmercier.com)
+
+## Installation
+
+This repo is a Claude Code plugin marketplace. Add it once:
+
+```
+/plugin marketplace add cmer/skills
+```
+
+Then install any of the skills below:
+
+```
+/plugin install <skill-name>
+```
+
+## Skills
+
+- [**Design System**](#design-system) — Scaffold a shadcn-backed React + Tailwind v4 design-system reference page and agent guardrails.
+
+### Design System
+
+`design-system`
+
+Scaffolds a shadcn-backed design system into a React + Tailwind v4 codebase: initializes or reuses shadcn, optionally applies a shadcn preset, installs a baseline set of official shadcn components, adds a live reference page at `/admin/design-system`, and writes managed instructions in `AGENTS.md`/`CLAUDE.md` so future agents use shadcn as the source of truth.
+
+```
+/plugin install design-system
+```
+
+## License
+
+MIT
+
+## Attribution
+
+This project was forked and adapted from [buildermethods/bm-skills](https://github.com/buildermethods/bm-skills).

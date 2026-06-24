@@ -1,0 +1,10 @@
+{
+  "name": "design-system",
+  "description": "Scaffold and maintain a shadcn-backed design-system reference page and agent guardrails.",
+  "version": "0.1.8",
+  "author": {
+    "name": "Carl Mercier",
+    "email": "foss@carlmercier.com"
+  },
+  "homepage": "https://carlmercier.com"
+}
