@@ -17,6 +17,8 @@ Superset is an agent orchestrator that manages git worktrees. It provides worksp
 
 **`.superset/config.json`** in the repo root.
 
+Create or update this project file when Superset is selected. Do not ask the user to configure these lifecycle commands elsewhere.
+
 ```json
 {
   "setup": ["<setup command>"],
@@ -62,6 +64,7 @@ The dev server is exposed directly through the `run` array in `.superset/config.
 
 ## Notes
 
+- Preserve existing command wrappers from other project orchestrator configs when present (for example `mise trust && mise exec -- ...`).
 - Port allocation requires file-based locking to handle concurrent workspace creation.
 - Allocations should be stored under `$SUPERSET_HOME_DIR` (defaulting to `~/.superset/`) so they survive across shell sessions and are shared across all projects.
 - The `.superset/ports.json` labels file is gitignored — it is generated per-workspace, not committed.

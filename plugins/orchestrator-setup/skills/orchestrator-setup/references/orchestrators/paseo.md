@@ -19,6 +19,8 @@ Paseo is an agent orchestrator that manages git worktrees and provides port assi
 
 **`paseo.json`** at the repo root.
 
+Create or update this project file when Paseo is selected. Do not ask the user to configure these lifecycle commands elsewhere.
+
 ```json
 {
   "worktree": {
@@ -58,5 +60,6 @@ Paseo does not provide an explicit workspace name variable. Derive the workspace
 
 ## Notes
 
+- Preserve existing command wrappers from other project orchestrator configs when present (for example `mise trust && mise exec -- ...`).
 - Paseo provides ports on all processes, making it the simplest orchestrator for port resolution — no discovery or allocation needed.
 - The `scripts.dev.type: "service"` tells Paseo this is a long-running server, not a one-shot script.

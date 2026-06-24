@@ -17,6 +17,8 @@ Superconductor is an agent orchestrator that manages git worktrees. It provides 
 
 **`.superconductor/config.json`** in the repo root.
 
+Create or update this project file when Superconductor is selected. Do not ask the user to configure these lifecycle commands elsewhere.
+
 ```json
 {
   "setup": ["<setup command>"],
@@ -62,5 +64,6 @@ The dev server is exposed directly through the `run` array in `.superconductor/c
 
 ## Notes
 
+- Preserve existing command wrappers from other project orchestrator configs when present (for example `mise trust && mise exec -- ...`).
 - Superconductor shares the port allocation storage path and labels file format with Superset. A project that supports both does not need separate allocation infrastructure.
 - The config file schema is nearly identical to Superset's (`setup`, `run`, `teardown` arrays) but lives in `.superconductor/config.json`.

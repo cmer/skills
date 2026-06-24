@@ -6,11 +6,11 @@
 # rearrange without understanding each orchestrator's port strategy.
 #
 # Resolution chain:
-#   1. $CONDUCTOR_PORT         — Conductor provides this on dev-server process
+#   1. $CONDUCTOR_PORT         — Conductor provides first port in workspace range
 #   2. $PASEO_WORKTREE_PORT    — Paseo provides this on all worktree processes
 #   3. $PASEO_PORT             — Paseo provides this on service processes only
 #   4. workspace port allocation — for Superset/Superconductor/Orca (10-port block)
-#   5. puma process discovery   — Conductor fallback (scans running puma processes)
+#   5. puma process discovery   — fallback when no port env var is available
 #   6. $PORT                   — generic env var
 #   7. 3000                    — default
 #
@@ -54,7 +54,7 @@ elif workspace_needs_port_allocation; then
       bin/orchestrator/port allocate
     fi
   fi
-elif [ -n "${CONDUCTOR_BIN_DIR:-}" ]; then
+elif [ -n "${CONDUCTOR_WORKSPACE_PATH:-}" ] || [ -n "${CONDUCTOR_ROOT_PATH:-}" ]; then
   discovered="$(discover_puma_port)"
   if [ -n "$discovered" ]; then
     echo "$discovered"

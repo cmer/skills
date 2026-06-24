@@ -18,6 +18,8 @@ Orca is an agent orchestrator that manages git worktrees. It provides different 
 
 **`orca.yaml`** at the repo root.
 
+Create or update this project file when Orca is selected. Do not ask the user to configure setup/archive elsewhere.
+
 ```yaml
 scripts:
   setup: |
@@ -38,7 +40,7 @@ scripts:
 
 - `scripts.setup` runs when a worktree is created.
 - `scripts.archive` runs when a worktree is archived/removed.
-- Orca does **not** have a built-in `run`/`dev` command in the config. The dev server must be started manually or via a Quick Command.
+- Orca does **not** have a built-in `run`/`dev` command in `orca.yaml`. Still write `orca.yaml` for setup/archive. If repo-scoped Quick Commands are available in a project file, update that file too; otherwise document the dev command in project docs rather than presenting setup/archive as a user task.
 
 ### Quick Commands (local Orca settings)
 
@@ -61,6 +63,7 @@ This is configured in Orca's local settings as a `terminalQuickCommands` entry s
 
 ## Notes
 
+- Preserve existing command wrappers from other project orchestrator configs when present (for example `mise trust && mise exec -- ...`).
 - Orca's split detection context (terminals use `ORCA_WORKTREE_ID`, hooks use `ORCA_WORKTREE_PATH`) means detection logic must check for either variable.
-- The dev server is not managed by Orca's config — it must be started manually or via Quick Commands. This is different from other orchestrators that have explicit `run`/`dev` lifecycle hooks.
+- The dev server is not managed by `orca.yaml` — it must be started via a repo-scoped Quick Command if available, project docs, or a terminal command. This is different from other orchestrators that have explicit `run`/`dev` lifecycle hooks.
 - `orca.yaml` uses `archive` instead of `teardown` for the cleanup lifecycle hook.

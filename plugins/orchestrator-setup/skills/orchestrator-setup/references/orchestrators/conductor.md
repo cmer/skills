@@ -1,42 +1,83 @@
 # Conductor
 
 - **Website**: https://www.conductor.build/
+- **Documentation**: https://www.conductor.build/docs/
 
-Conductor is an agent orchestrator that manages git worktrees externally. It calls project scripts but does not read a repo-level config file.
+Conductor is an agent orchestrator that manages git worktrees. It reads shared repository settings from `.conductor/settings.toml`; agents configuring a project must create or update that file instead of asking the user to set lifecycle commands in the Conductor UI.
 
 ## Environment variables
 
 | Variable | Context | Purpose |
 |----------|---------|---------|
-| `CONDUCTOR_BIN_DIR` | All shells | **Detection var.** Always set when running inside Conductor. |
-| `CONDUCTOR_WORKSPACE_NAME` | Dev-server process only | Workspace name. NOT available in regular shells — only on the process Conductor starts for the dev server. |
-| `CONDUCTOR_PORT` | Dev-server process only | Port for the dev server. Only available on the dev-server process. |
+| `CONDUCTOR_WORKSPACE_PATH` | Terminals and scripts | **Detection var.** Path to the workspace root. |
+| `CONDUCTOR_WORKSPACE_NAME` | Terminals and scripts | Workspace name. |
+| `CONDUCTOR_ROOT_PATH` | Terminals and scripts | Path to the repository root directory. |
+| `CONDUCTOR_DEFAULT_BRANCH` | Terminals and scripts | Default branch name, usually `main`. |
+| `CONDUCTOR_PORT` | Terminals and scripts | First port in a range of 10 ports assigned to the workspace. |
+| `CONDUCTOR_IS_LOCAL` | Terminals and scripts | `1` in local workspaces, `0` in cloud workspaces. |
 
 ## Config file
 
-None. Conductor calls project lifecycle scripts externally — it does not read a config file from the repo.
+**`.conductor/settings.toml`** in the repo root.
+
+```toml
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "<setup command>"
+run = "<dev server command>"
+archive = "<teardown command>"
+run_mode = "concurrent"
+```
+
+Use `archive`, not `teardown`, for cleanup. `run_mode` is usually `concurrent` for workspace-isolated projects; use `nonconcurrent` only when the project still depends on one shared fixed resource.
+
+Preserve project command wrappers when detected. For example, if the project uses `mise`, a valid config is:
+
+```toml
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "mise trust && mise exec -- bin/orchestrator/setup"
+run = "mise exec -- bin/dev"
+archive = "mise exec -- bin/orchestrator/teardown"
+run_mode = "concurrent"
+```
+
+Conductor also supports `.conductor/settings.local.toml` for machine-local overrides. Prefer the committed `.conductor/settings.toml` for this skill because the goal is to configure the project for teammates and future agents.
 
 ## Port strategy
 
-**Tool provides port on dev-server process; discovery fallback elsewhere.**
+**Tool provides a 10-port range.**
 
-- On the dev-server process: `$CONDUCTOR_PORT` is set directly.
-- In other shells: port must be discovered (e.g., by scanning running processes for a puma/node server matching the workspace name).
-- No 10-port block allocation needed.
+- `$CONDUCTOR_PORT` is the first port in the workspace's assigned range.
+- Additional services can use offsets from that value (for example Rails on `$CONDUCTOR_PORT`, Vite on `$CONDUCTOR_PORT + 1`).
+- No project-managed port allocation is needed.
 
 ## Lifecycle
 
-Conductor invokes `bin/orchestrator/setup` and `bin/dev` (or equivalent) externally. The project only needs those scripts to exist and to detect Conductor via `$CONDUCTOR_BIN_DIR`.
+- `scripts.setup` runs after Conductor creates a workspace.
+- `scripts.run` runs from Conductor's Run button.
+- `scripts.archive` runs before Conductor archives a workspace.
+- Scripts run from the workspace directory.
 
 ## Custom dev command
 
-Conductor is external — it has no repo config file and no project-scoped custom-command mechanism. The dev server is whatever script Conductor is configured to invoke (e.g., `bin/dev`); there is nothing to add for a custom dev command.
+The dev server is exposed through `scripts.run` in `.conductor/settings.toml`. For this skill's default Rails scaffold, use:
+
+```toml
+[scripts]
+run = "bin/dev"
+```
+
+`bin/dev` should call `bin/orchestrator/dev-port`, which reads `$CONDUCTOR_PORT` and exports service-specific port variables before starting the process manager.
 
 ## Workspace name resolution
 
-`$CONDUCTOR_WORKSPACE_NAME` is only available on the dev-server process. For other shells, the workspace name must be derived from the persisted workspace name file or `basename "$PWD"`.
+`$CONDUCTOR_WORKSPACE_NAME` is available to terminals and scripts. Keep the persisted workspace name file in the shared implementation anyway so Rails commands launched outside an orchestrator-provided shell can still find the correct database name.
 
 ## Notes
 
-- Conductor is unique in that the workspace name and port are only available on the dev-server process, not in all shells. This requires special handling for port discovery in non-dev-server contexts.
-- Projects that use Conductor typically also support process-title discovery (scanning `ps` output) as a port fallback.
+- Do not ask the user to configure setup/run/archive manually in Conductor's UI. Create or update `.conductor/settings.toml` with the resolved lifecycle commands.
+- Repository settings can also define shared environment variables under `[environment_variables]`, but do not commit secrets. Use `.conductor/settings.local.toml` only for machine-local secret values or overrides.
+- This config file is the same role as `.superset/config.json`, `.superconductor/config.json`, `paseo.json`, and `orca.yaml`: checked-in project lifecycle configuration.

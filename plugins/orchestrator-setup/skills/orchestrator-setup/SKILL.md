@@ -36,7 +36,7 @@ Detect:
 - **Dev server command** — look for `Procfile.dev`, `bin/dev`, or a Foreman/Overmind setup.
 - **Frontend bundler** — Vite (`vite.config.*`), Webpacker, esbuild, or Propshaft. Determines whether additional ports are needed (e.g., Vite dev server).
 - **Setup/teardown scripts** — look for `bin/setup`, `bin/orchestrator/setup`, `bin/orchestrator/teardown` (or legacy `bin/workspace-setup`, `bin/workspace-teardown`).
-- **Existing orchestrator configs** — check if any of the supported config files already exist.
+- **Existing orchestrator configs** — check if any of the supported config files already exist (including `.conductor/settings.toml` / `.conductor/settings.local.toml` for Conductor).
 - **Existing workspace infrastructure** — look for `bin/orchestrator/` directory, or legacy `bin/workspace-env`, `bin/workspace-setup`, etc.
 
 State a brief detection summary before continuing.
@@ -85,6 +85,8 @@ Resolve the three lifecycle commands for this project:
 
 Use them directly.
 
+Preserve existing project command wrappers when they are already part of the project's workflow. For example, if existing orchestrator configs or project docs run scripts through `mise exec --`, `bundle exec`, `bin/rails`, `overmind`, or another local tool wrapper, use that same wrapper in every orchestrator config instead of writing a bare command. If one selected orchestrator already has a working config, treat its commands as strong evidence for the other orchestrator configs.
+
 ### If workspace scripts don't exist
 
 Ask the user:
@@ -98,13 +100,23 @@ When scaffolding, create scripts under `bin/orchestrator/`. `bin/dev` stays at t
 
 ## Phase 3 — Create orchestrator config files
 
-For each selected orchestrator, create its config file (if it uses one) exactly as documented in its reference file at `references/orchestrators/<name>.md`. The config path, schema, lifecycle key names, custom dev command, and any quirks all live there — read it before writing the file. Fill in the resolved lifecycle commands from Phase 2.
+For each selected orchestrator, create or update its config file exactly as documented in its reference file at `references/orchestrators/<name>.md`. The config path, schema, lifecycle key names, custom dev command, and any quirks all live there — read it before writing the file. Fill in the resolved lifecycle commands from Phase 2.
+
+Project config files to create or update:
+
+| Orchestrator | Project config file | Lifecycle commands represented |
+|--------------|---------------------|--------------------------------|
+| Conductor | `.conductor/settings.toml` | `scripts.setup`, `scripts.run`, `scripts.archive`, `scripts.run_mode` |
+| Paseo | `paseo.json` | `worktree.setup`, `worktree.teardown`, `scripts.dev` |
+| Superset | `.superset/config.json` | `setup`, `teardown`, `run` |
+| Superconductor | `.superconductor/config.json` | `setup`, `teardown`, `run` |
+| Orca | `orca.yaml` | `scripts.setup`, `scripts.archive` |
 
 Things the reference files spell out and you must honor:
 
-- Some orchestrators need **no** config file (e.g. Conductor calls project scripts externally — just confirm the setup and dev scripts exist and are executable).
+- Agents must write project-scoped config files when the orchestrator supports them. Do not tell the user to finish setup in an app UI when a repository config file can express the same lifecycle commands.
 - Lifecycle key names differ between tools (e.g. Orca uses `archive` rather than `teardown`).
-- Some tools have no `run`/`dev` in their config and need the dev server started manually or via a project-scoped custom command (see the orchestrator's "Custom dev command" section).
+- Some tools have no `run`/`dev` in their project config. Still create or update the project config file for the lifecycle hooks it does support, then handle the dev command as described in the orchestrator's "Custom dev command" section.
 
 ## Phase 4 — Update .gitignore
 
@@ -161,7 +173,7 @@ The script provides these shell functions:
 
 Key design principles:
 
-- **Workspace name resolution order**: persisted file (`tmp/WORKSPACE_NAME`) → orchestrator env vars → `basename "$PWD"` when an orchestrator is detected. The persisted file takes priority because orchestrator env vars may not be present in all shell contexts (e.g., Conductor only sets `$CONDUCTOR_WORKSPACE_NAME` on the dev-server process).
+- **Workspace name resolution order**: persisted file (`tmp/WORKSPACE_NAME`) → orchestrator env vars → `basename "$PWD"` when an orchestrator is detected. The persisted file takes priority because orchestrator env vars may not be present in every shell context or after scripts are run outside an orchestrator-provided environment.
 - **Database config isolation**: `config/database.yml` reads a single project-level env var (e.g., `MYAPP_WORKSPACE_NAME`) and `tmp/WORKSPACE_NAME`. It does not know about individual orchestrators. `bin/orchestrator/setup` bridges the gap by exporting the project env var after resolving the orchestrator-specific one.
 - **Port allocation policy**: `workspace_needs_port_allocation` returns true only for orchestrators that don't provide ports (Superset, Superconductor, Orca). Conductor and Paseo provide ports directly.
 
@@ -203,11 +215,11 @@ Outputs a single port number to stdout. Used by `bin/dev` and any script that ne
 
 Resolution priority chain (order matters):
 
-1. `$CONDUCTOR_PORT` — Conductor provides this on the dev-server process
+1. `$CONDUCTOR_PORT` — Conductor provides the first port in a 10-port workspace range
 2. `$PASEO_WORKTREE_PORT` — Paseo provides this on all worktree processes
 3. `$PASEO_PORT` — Paseo provides this on service processes only (fallback)
 4. `bin/orchestrator/port get` or `allocate` — for Superset/Superconductor/Orca
-5. Puma process discovery — Conductor fallback for non-dev-server shells (scans `ps` output for puma with workspace name in title)
+5. Puma process discovery — fallback for shells where a tool-provided port is unavailable (scans `ps` output for puma with workspace name in title)
 6. `$PORT` — generic env var
 7. `3000` — default
 
@@ -291,7 +303,7 @@ Update `CLAUDE.md` and/or `AGENTS.md` with orchestrator information:
 1. List which orchestrators are supported and their detection env vars.
 2. Document the workspace database naming convention.
 3. Document dev server startup and port discovery for each orchestrator.
-4. Document any orchestrator-specific quirks (e.g., Orca needs manual dev server start, Conductor port is only on dev-server process).
+4. Document any orchestrator-specific quirks (e.g., Orca needs manual dev server start).
 
 If neither `CLAUDE.md` nor `AGENTS.md` exists, create a section in `CLAUDE.md`.
 
@@ -315,6 +327,9 @@ ruby -e "require 'json'; JSON.parse(File.read('<config-file>'))"
 
 # Verify YAML config files parse
 ruby -e "require 'yaml'; YAML.load_file('<config-file>')"
+
+# Verify TOML config files parse
+python3 -c "import pathlib, tomllib; tomllib.loads(pathlib.Path('<config-file>').read_text())"
 ```
 
 ## Checklist
@@ -322,7 +337,7 @@ ruby -e "require 'yaml'; YAML.load_file('<config-file>')"
 Run through every item before reporting done:
 
 - [ ] (Phases 0–1) Project type detected, lifecycle commands resolved, and orchestrator reference files read for all selected orchestrators
-- [ ] (Phase 3) Config files created for each orchestrator that needs one, per its reference file
+- [ ] (Phase 3) Project config files created or updated for each selected orchestrator, per its reference file
 - [ ] (Phase 4) `.gitignore` updated for generated workspace files
 - [ ] (Phase 5) Detection and lifecycle scripts created or confirmed existing (if user opted in)
   - [ ] `bin/orchestrator/env` — detection vars, workspace name resolution, port allocation policy
