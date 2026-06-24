@@ -1,0 +1,12 @@
+# Example Procfile.dev for a Rails app with Vite.
+#
+# Each service reads its port from env vars set by bin/dev.
+# Ports are derived from the base port: PORT, PORT+1, PORT+2, etc.
+#
+# To adapt for your project:
+#   1. Remove the vite line if you don't use a JS bundler.
+#   2. Add lines for Sidekiq, Action Cable, webhooks, etc.
+#   3. Adjust the Rails server command flags as needed.
+
+web: bin/rails s -p $PORT -b 0.0.0.0
+vite: npx vite --port $VITE_PORT
