@@ -40,7 +40,8 @@ workspace_env_name() {
 # Each orchestrator has a "detection var" that is always set in its environment.
 
 workspace_detection_present() {
-  [ -n "${CONDUCTOR_BIN_DIR:-}" ] ||
+  [ -n "${CONDUCTOR_WORKSPACE_PATH:-}" ] ||
+    [ -n "${CONDUCTOR_ROOT_PATH:-}" ] ||
     [ -n "${PASEO_WORKTREE_PATH:-}" ] ||
     [ -n "${SUPERSET_WORKSPACE_PATH:-}" ] ||
     [ -n "${SUPERCONDUCTOR_WORKTREE_PATH:-}" ] ||
@@ -77,7 +78,7 @@ workspace_needs_port_allocation() {
 # Prefers orchestrator-provided path, falls back to $PWD.
 
 workspace_path() {
-  printf '%s\n' "${SUPERSET_WORKSPACE_PATH:-${SUPERCONDUCTOR_WORKTREE_PATH:-${PASEO_WORKTREE_PATH:-${ORCA_WORKTREE_PATH:-$PWD}}}}"
+  printf '%s\n' "${CONDUCTOR_WORKSPACE_PATH:-${SUPERSET_WORKSPACE_PATH:-${SUPERCONDUCTOR_WORKTREE_PATH:-${PASEO_WORKTREE_PATH:-${ORCA_WORKTREE_PATH:-$PWD}}}}}"
 }
 
 # --- Database naming ---
