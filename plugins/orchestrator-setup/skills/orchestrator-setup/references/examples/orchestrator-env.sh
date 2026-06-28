@@ -69,7 +69,7 @@ workspace_managed() {
 # --- Port allocation ---
 # Returns true if the active orchestrator does NOT provide a port,
 # meaning the project must allocate its own port block.
-# Conductor and Paseo provide ports; Superset, Superconductor, and Orca do not.
+# Conductor and Paseo provide ports; Superset, super.engineering, and Orca do not.
 
 workspace_needs_port_allocation() {
   [ -n "${SUPERSET_WORKSPACE_PATH:-}" ] ||

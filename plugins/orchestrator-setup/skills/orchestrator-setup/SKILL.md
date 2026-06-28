@@ -1,6 +1,6 @@
 ---
 name: orchestrator-setup
-description: Configure a Rails project for agent orchestrators (Conductor, Superset, Superconductor, Orca, Paseo). Handles config files, workspace detection, database isolation, port management, and documentation.
+description: Configure a Rails project for agent orchestrators (Conductor, Superset, super.engineering, Orca, Paseo). Handles config files, workspace detection, database isolation, port management, and documentation.
 user_invocable: true
 ---
 
@@ -19,7 +19,7 @@ Each orchestrator's full specification — env vars, config file path and schema
 | **Conductor** | No (tool provides) | `references/orchestrators/conductor.md` |
 | **Paseo** | No (tool provides) | `references/orchestrators/paseo.md` |
 | **Superset** | Yes (10-port block) | `references/orchestrators/superset.md` |
-| **Superconductor** | Yes (10-port block) | `references/orchestrators/superconductor.md` |
+| **super.engineering** | Yes (10-port block) | `references/orchestrators/superconductor.md` |
 | **Orca** | Yes (10-port block) | `references/orchestrators/orca.md` |
 
 ## Phase 0 — Detect project state
@@ -51,10 +51,12 @@ State a brief detection summary before continuing.
 Ask the user which orchestrator(s) to configure:
 
 - Question: "Which agent orchestrators do you want to configure?"
-- Options (multi-select): `Conductor`, `Paseo`, `Superset`, `Superconductor`, `Orca`
+- Options (multi-select): `Conductor`, `Paseo`, `Superset`, `super.engineering`, `Orca`
 - If the user names an orchestrator not in the list, proceed to Phase 1b.
 
-For each selected orchestrator, read its reference file at `references/orchestrators/<name>.md`.
+Treat `Superconductor` as the legacy name for `super.engineering`, not as an unknown orchestrator. Its reference file remains `references/orchestrators/superconductor.md` because local paths and developer-facing names still use `superconductor`.
+
+For each selected orchestrator, read its reference file at `references/orchestrators/<name>.md` or the mapped reference file named in the supported-orchestrators table.
 
 ### Phase 1b — New orchestrator (not in the supported list)
 
@@ -114,7 +116,7 @@ Project config files to create or update:
 | Conductor | `.conductor/settings.toml` | `scripts.setup`, `scripts.run`, `scripts.archive`, `scripts.run_mode` |
 | Paseo | `paseo.json` | `worktree.setup`, `worktree.teardown`, `scripts.dev` |
 | Superset | `.superset/config.json` | `setup`, `teardown`, `run` |
-| Superconductor | `.superconductor/config.json` | `setup`, `teardown`, `run` |
+| super.engineering | `.superconductor/config.json` | `setup`, `teardown`, `run` |
 | Orca | `orca.yaml` | `scripts.setup`, `scripts.archive` |
 
 Things the reference files spell out and you must honor:
@@ -182,7 +184,7 @@ Key design principles:
 
 - **Workspace name resolution order**: persisted file (`tmp/WORKSPACE_NAME`) → orchestrator env vars → `basename "$PWD"` when an orchestrator is detected. The persisted file takes priority because orchestrator env vars may not be present in every shell context or after scripts are run outside an orchestrator-provided environment.
 - **Database config isolation**: if `config/database.yml` already derives names per worktree, preserve it and do not add shell database-name helpers that reimplement a different naming rule. If the project has stock fixed names, use the env/file pattern where `config/database.yml` reads a single project-level env var (e.g., `MYAPP_WORKSPACE_NAME`) and `tmp/WORKSPACE_NAME`; `bin/orchestrator/setup` bridges the gap by exporting the project env var after resolving the orchestrator-specific one.
-- **Port allocation policy**: `workspace_needs_port_allocation` returns true only for orchestrators that don't provide ports (Superset, Superconductor, Orca). Conductor and Paseo provide ports directly.
+- **Port allocation policy**: `workspace_needs_port_allocation` returns true only for orchestrators that don't provide ports (Superset, super.engineering, Orca). Conductor and Paseo provide ports directly.
 
 Only include detection checks for orchestrators the project actually supports. Remove the others.
 
@@ -226,7 +228,7 @@ Resolution priority chain (order matters):
 1. `$CONDUCTOR_PORT` — Conductor provides the first port in a 10-port workspace range
 2. `$PASEO_WORKTREE_PORT` — Paseo provides this on all worktree processes
 3. `$PASEO_PORT` — Paseo provides this on service processes only (fallback)
-4. `bin/orchestrator/port get` or `allocate` — for Superset/Superconductor/Orca
+4. `bin/orchestrator/port get` or `allocate` — for Superset/super.engineering/Orca
 5. Puma process discovery — fallback for shells where a tool-provided port is unavailable (scans `ps` output for puma with workspace name in title)
 6. `$PORT` — generic env var
 7. `3000` — default
@@ -237,7 +239,7 @@ The puma discovery pattern matches process titles like `puma <ver> (tcp://0.0.0.
 
 **Example**: `references/examples/orchestrator-port.sh`
 
-Only needed if any configured orchestrator requires project-managed port allocation (Superset, Superconductor, Orca). Manages 10-port blocks.
+Only needed if any configured orchestrator requires project-managed port allocation (Superset, super.engineering, Orca). Manages 10-port blocks.
 
 Subcommands: `get`, `allocate`, `reserve PORT`, `release`.
 
@@ -287,7 +289,7 @@ All database entries (`development`, `test`) use `<%= workspace %>_<environment>
 
 Strategy comparison:
 
-- **Git-worktree-folder derivation**: database names come from the worktree path/folder or `.git` pointer. Prefer preserving this when already present. It works for Conductor, Superconductor, Superset, Orca, Paseo, and any other git-worktree-based tool without setup env bridging.
+- **Git-worktree-folder derivation**: database names come from the worktree path/folder or `.git` pointer. Prefer preserving this when already present. It works for Conductor, super.engineering, Superset, Orca, Paseo, and any other git-worktree-based tool without setup env bridging.
 - **`WORKSPACE_NAME` env/file derivation**: database names come from a project env var plus optional `tmp/WORKSPACE_NAME`. Use this for stock Rails templates or for orchestrators that do not expose a stable worktree folder. It requires setup/teardown scripts and shell helpers to export the same project env var before Rails commands that depend on it.
 
 ### 6d. Dev server script — `bin/dev`

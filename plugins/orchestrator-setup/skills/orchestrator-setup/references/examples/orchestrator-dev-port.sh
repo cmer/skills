@@ -9,7 +9,7 @@
 #   1. $CONDUCTOR_PORT         — Conductor provides first port in workspace range
 #   2. $PASEO_WORKTREE_PORT    — Paseo provides this on all worktree processes
 #   3. $PASEO_PORT             — Paseo provides this on service processes only
-#   4. workspace port allocation — for Superset/Superconductor/Orca (10-port block)
+#   4. workspace port allocation — for Superset/super.engineering/Orca (10-port block)
 #   5. puma process discovery   — fallback when no port env var is available
 #   6. $PORT                   — generic env var
 #   7. 3000                    — default
