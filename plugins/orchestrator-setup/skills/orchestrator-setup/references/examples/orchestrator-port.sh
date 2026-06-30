@@ -2,7 +2,7 @@
 #/ Usage: bin/orchestrator/port [get|allocate|reserve PORT|release]
 #/
 #/ Manage 10-port block allocation for workspace isolation.
-#/ Required when orchestrators don't provide ports (Superset, Superconductor, Orca).
+#/ Required when orchestrators don't provide ports (Superset, super.engineering, Orca).
 #/
 #/ Subcommands:
 #/   get       — Print allocated port if one exists, or exit 1.
@@ -16,7 +16,7 @@
 #/
 #/ Note: the ~/.superset/port-allocations path and the .superset/ports.json
 #/ labels file are a deliberately SHARED allocation convention reused by
-#/ Superset, Superconductor, and Orca — not a dependency on Superset itself.
+#/ Superset, super.engineering, and Orca — not a dependency on Superset itself.
 #/ A project supporting any of those uses this one allocation store.
 #/
 #/ To adapt for your project:
