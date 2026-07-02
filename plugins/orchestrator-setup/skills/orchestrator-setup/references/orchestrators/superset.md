@@ -35,6 +35,7 @@ Each field is an array of shell commands (run sequentially).
 
 - Superset does not provide a port. The project must allocate a contiguous block of ports (typically 10) and manage allocation/release.
 - Port allocations are stored in `$SUPERSET_HOME_DIR/port-allocations/<project>/` (one file per workspace, keyed by a checksum of the workspace path).
+- Allocation skips browser-unsafe ports, including port 10080 (`ERR_UNSAFE_PORT`).
 - A labels file at `.superset/ports.json` maps port offsets to service names for Superset's UI.
 
 ### Labels file format (`.superset/ports.json`)

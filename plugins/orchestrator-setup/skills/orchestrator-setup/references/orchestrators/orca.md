@@ -34,6 +34,7 @@ scripts:
 
 - Orca does not provide a port. The project must allocate a contiguous block of ports.
 - Port allocations are stored under `$SUPERSET_HOME_DIR/port-allocations/<project>/` (shared with Superset's allocation system).
+- Allocation skips browser-unsafe ports, including port 10080 (`ERR_UNSAFE_PORT`).
 - Labels file: `.superset/ports.json` (shared format with Superset).
 
 ## Lifecycle

@@ -39,6 +39,7 @@ Each field is an array of shell commands (run sequentially).
 
 - super.engineering does not provide a port. The project must allocate a contiguous block of ports.
 - Port allocations are stored under `$SUPERSET_HOME_DIR/port-allocations/<project>/` (shared with Superset's allocation system — they use the same storage path).
+- Allocation skips browser-unsafe ports, including port 10080 (`ERR_UNSAFE_PORT`).
 - Labels file: `.superset/ports.json` (shared format with Superset).
 
 ### Labels file format (`.superset/ports.json`)

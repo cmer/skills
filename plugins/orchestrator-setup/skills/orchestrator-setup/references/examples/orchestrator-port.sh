@@ -119,6 +119,14 @@ block_is_unallocated() {
   done
 }
 
+block_is_browser_safe() {
+  candidate_start="$1"
+  # Chrome/Firefox/Safari refuse to connect to a small list of "unsafe" ports
+  # (ERR_UNSAFE_PORT, a NAT-slipstreaming mitigation). 10080 (Amanda) is the only
+  # one inside the 10000-59999 allocation range, so skip its block.
+  [ "$candidate_start" -ne 10080 ]
+}
+
 case "$action" in
   get)
     read_port
@@ -146,7 +154,7 @@ case "$action" in
 
     port=10000
     while [ "$port" -le 59990 ]; do
-      if block_is_unallocated "$port" && port_is_available "$port"; then
+      if block_is_browser_safe "$port" && block_is_unallocated "$port" && port_is_available "$port"; then
         save_allocation "$port"
         write_labels "$port"
         echo "$port"
@@ -168,6 +176,10 @@ case "$action" in
     esac
     if [ "$port" -lt 1 ] || [ "$port" -gt 65526 ]; then
       echo "Port block must start between 1 and 65526." >&2
+      exit 1
+    fi
+    if ! block_is_browser_safe "$port"; then
+      echo "Port block $port contains a browser-blocked port (ERR_UNSAFE_PORT)." >&2
       exit 1
     fi
     if existing="$(read_port)"; then

@@ -248,6 +248,7 @@ Key implementation details:
 - **Storage**: Allocations stored in `$SUPERSET_HOME_DIR/port-allocations/<project>/` (defaults to `~/.superset/port-allocations/<project>/`). Each workspace gets a file keyed by `cksum` of the workspace path. The file contains two lines: the base port and the workspace path.
 - **Locking**: Uses `mkdir` for atomic lock acquisition with PID-based stale lock detection. Timeout after 10 seconds (100 × 0.1s).
 - **Allocation range**: 10000–59990 in steps of 10. Checks both that the block doesn't overlap existing allocations and that all 10 ports are not in use (`lsof` check).
+- **Browser-safe ports**: Skips the 10080 block because browsers reject port 10080 with `ERR_UNSAFE_PORT`.
 - **Stale cleanup**: On `allocate`, removes allocation files whose workspace path no longer exists on disk.
 - **Labels file**: Writes `.superset/ports.json` mapping base port offsets to service names (e.g., Rails, Vite). Update the labels in `write_labels()` to match the project's services.
 
