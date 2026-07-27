@@ -21,6 +21,7 @@ Then install any of the skills below:
 ## Skills
 
 - [**Design System**](#design-system) — Scaffold a shadcn-backed React + Tailwind v4 design-system reference page and agent guardrails.
+- [**Model Routing**](#model-routing) — Route delegated work to the right model and reasoning effort, with scope fences for Opus and Fable as planner and read-only skeptic.
 - [**Orchestrator Setup**](#orchestrator-setup) — Configure Rails projects for agent orchestrators with isolated worktrees, databases, ports, and lifecycle hooks.
 
 ### Design System
@@ -31,6 +32,16 @@ Scaffolds a shadcn-backed design system into a React + Tailwind v4 codebase: ini
 
 ```
 /plugin install design-system@cmer-skills
+```
+
+### Model Routing
+
+`model-routing`
+
+Routing doctrine for delegating work to subagents, workflows, and Codex: which model and reasoning effort executes which kind of work. Opus 5 executes everything by default behind a mandatory scope fence (flag, don't fix), Fable 5 plans big cross-cutting features and acts as a read-only skeptic at commitment boundaries (`ship` / `fix-first` / `rethink` verdicts), and Codex provides near-free adversarial review. Ships three agents (`fable-planner`, `fable-skeptic`, `sol-reviewer`) and a `/verdict` command. Verdict vocabulary and the commitment-boundary pattern adapted from [fable-advisor](https://github.com/DannyMac180/fable-advisor).
+
+```
+/plugin install model-routing@cmer-skills
 ```
 
 ### Orchestrator Setup

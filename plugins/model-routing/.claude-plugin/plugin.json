@@ -1,0 +1,13 @@
+{
+  "name": "model-routing",
+  "description": "Route delegated work to the right model and effort: Opus executes behind a scope fence, Fable plans and reviews the hardest work, Codex red-teams.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Carl Mercier",
+    "email": "foss@carlmercier.com"
+  },
+  "homepage": "https://github.com/cmer",
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "commands": "./commands/"
+}
