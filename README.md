@@ -44,6 +44,14 @@ Routing doctrine for delegating work to subagents, workflows, and Codex: which m
 /plugin install model-routing@cmer-skills
 ```
 
+After installing, add one line to your global `~/.claude/CLAUDE.md` (or a project's `CLAUDE.md`):
+
+```
+When delegating work to subagents, workflows, or Codex, use the model-routing skill first.
+```
+
+The skill's description makes it discoverable when an agent is about to delegate, but discovery is best-effort — this line makes it reliable. Projects with their own routing doc keep it: the skill defers to repo-level docs for specifics like cost tables, risk examples, and reporting targets.
+
 ### Orchestrator Setup
 
 `orchestrator-setup`
