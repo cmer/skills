@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier.",
-    "version": "1.0.4"
+    "version": "1.0.5"
   },
   "plugins": [
     {
@@ -32,6 +32,18 @@
       "homepage": "https://github.com/cmer",
       "category": "devops",
       "tags": ["worktree", "orchestration", "agent", "devops", "workspace"]
+    },
+    {
+      "name": "model-routing",
+      "source": "./plugins/model-routing",
+      "description": "Route delegated work to the right model and effort: Opus executes behind a scope fence, Fable plans and reviews the hardest work, Codex red-teams.",
+      "author": {
+        "name": "Carl Mercier",
+        "email": "foss@carlmercier.com"
+      },
+      "homepage": "https://github.com/cmer",
+      "category": "workflow",
+      "tags": ["routing", "delegation", "subagents", "review", "orchestration"]
     }
   ]
 }
