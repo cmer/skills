@@ -22,6 +22,7 @@ Then install any of the skills below:
 
 - [**Design System**](#design-system) — Scaffold a shadcn-backed React + Tailwind v4 design-system reference page and agent guardrails.
 - [**Orchestrator Setup**](#orchestrator-setup) — Configure Rails projects for agent orchestrators with isolated worktrees, databases, ports, and lifecycle hooks.
+- [**GitHub Repository Configuration**](#github-repository-configuration) — Apply standard merge, Dependabot, and Actions settings to a repository.
 
 ### Design System
 
@@ -41,6 +42,17 @@ Configures a Rails project for agent orchestrators including Conductor, Paseo, S
 
 ```
 /plugin install orchestrator-setup@cmer-skills
+```
+
+### GitHub Repository Configuration
+
+`github`
+
+Configures a GitHub repository for squash-only merging, automatic merged-branch deletion, Dependabot alerts and security updates, and read-only default GitHub Actions token permissions. It intentionally leaves branch protection and rulesets unchanged.
+
+```
+/plugin install github@cmer-skills
+/github:configure-repo
 ```
 
 ## License

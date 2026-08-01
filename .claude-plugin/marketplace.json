@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "A public open-source Claude Code plugin marketplace maintained by Carl Mercier.",
-    "version": "1.0.4"
+    "version": "1.0.5"
   },
   "plugins": [
     {
@@ -32,6 +32,18 @@
       "homepage": "https://github.com/cmer",
       "category": "devops",
       "tags": ["worktree", "orchestration", "agent", "devops", "workspace"]
+    },
+    {
+      "name": "github",
+      "source": "./plugins/github",
+      "description": "Configure GitHub repositories with opinionated merge, Dependabot, and Actions defaults.",
+      "author": {
+        "name": "Carl Mercier",
+        "email": "foss@carlmercier.com"
+      },
+      "homepage": "https://github.com/cmer",
+      "category": "devops",
+      "tags": ["github", "repository", "dependabot", "devops"]
     }
   ]
 }

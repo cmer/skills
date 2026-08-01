@@ -1,0 +1,11 @@
+{
+  "name": "github",
+  "description": "Configure GitHub repositories with opinionated merge, Dependabot, and Actions defaults.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Carl Mercier",
+    "email": "foss@carlmercier.com"
+  },
+  "homepage": "https://github.com/cmer",
+  "skills": "./skills/"
+}

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: configure-repo [--dry-run] [OWNER/REPOSITORY]
+
+Configure merge behavior, Dependabot, and GitHub Actions permissions for a repository.
+With no repository argument, infer it from the current checkout.
+USAGE
+}
+
+dry_run=false
+repository=""
+
+while (($#)); do
+  case "$1" in
+    --dry-run)
+      dry_run=true
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -* )
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$repository" ]]; then
+        printf 'Expected at most one OWNER/REPOSITORY argument\n' >&2
+        exit 2
+      fi
+      repository="$1"
+      ;;
+  esac
+  shift
+done
+
+if ! command -v gh >/dev/null 2>&1; then
+  printf 'GitHub CLI (gh) is required: https://cli.github.com/\n' >&2
+  exit 1
+fi
+
+gh auth status --hostname github.com >/dev/null
+
+if [[ -z "$repository" ]]; then
+  repository=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+fi
+
+if [[ ! "$repository" =~ ^[[:alnum:]_.-]+/[[:alnum:]_.-]+$ ]]; then
+  printf 'Repository must use the OWNER/REPOSITORY format\n' >&2
+  exit 2
+fi
+
+apply() {
+  if $dry_run; then
+    printf '$'
+    printf ' %q' "$@"
+    printf '\n'
+  else
+    "$@" >/dev/null
+  fi
+}
+
+printf 'Configuring %s%s\n' "$repository" "$($dry_run && printf ' (dry run)')"
+
+apply gh api --method PATCH "repos/$repository" \
+  -F allow_squash_merge=true \
+  -F allow_merge_commit=false \
+  -F allow_rebase_merge=false \
+  -F delete_branch_on_merge=true \
+  -f squash_merge_commit_title=PR_TITLE \
+  -f squash_merge_commit_message=PR_BODY
+
+apply gh api --method PUT "repos/$repository/vulnerability-alerts"
+apply gh api --method PUT "repos/$repository/automated-security-fixes"
+apply gh api --method PUT "repos/$repository/actions/permissions/workflow" \
+  -f default_workflow_permissions=read \
+  -F can_approve_pull_request_reviews=false
+
+if $dry_run; then
+  printf 'No changes applied.\n'
+else
+  printf 'GitHub repository settings updated.\n'
+fi
