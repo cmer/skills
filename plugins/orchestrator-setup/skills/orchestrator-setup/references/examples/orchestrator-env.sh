@@ -5,6 +5,12 @@
 # workspace-aware scripts under bin/orchestrator/ source this file.
 # Do not duplicate orchestrator detection logic elsewhere.
 #
+# `workspace_name` reads exactly what config/database.yml reads, in the same
+# order — MYAPP_WORKSPACE_NAME, then tmp/WORKSPACE_NAME — so a shell script and
+# Rails can never resolve different databases. The sources Rails can't see (the
+# orchestrator's own name var, the directory name) belong to
+# `workspace_setup_name`, and reach Rails only by being persisted to the file.
+#
 # To adapt for your project:
 #   1. Replace MYAPP with your project name (env var prefix and db prefix).
 #   2. Add or remove orchestrator detection vars to match your configuration.
@@ -13,6 +19,8 @@
 #      replace them with an authoritative Rails/database.yml lookup.
 #   4. For the env/file database.yml scheme, update workspace_database_prefix
 #      to use your project's db naming.
+#   5. Keep `workspace_name` reading only what config/database.yml reads. New
+#      orchestrator name vars go in `workspace_orchestrator_name`.
 
 # --- Workspace name file ---
 
@@ -30,11 +38,20 @@ read_persisted_workspace_name() {
 }
 
 # --- Workspace name from environment ---
-# Priority: project override > orchestrator-provided names
-# Add/remove orchestrator vars as needed.
+# The project's own var, and only it: config/database.yml reads this same var,
+# and the two must not drift.
 
 workspace_env_name() {
-  name="${MYAPP_WORKSPACE_NAME:-${CONDUCTOR_WORKSPACE_NAME:-${SUPERCONDUCTOR_WORKSPACE_NAME:-${SUPERSET_WORKSPACE_NAME:-${ORCA_WORKSPACE_NAME:-}}}}}"
+  [ -n "${MYAPP_WORKSPACE_NAME:-}" ] || return 1
+  printf '%s\n' "$MYAPP_WORKSPACE_NAME"
+}
+
+# --- Workspace name from the orchestrator ---
+# The name the tool gives its own workspace. Add/remove orchestrator vars as
+# needed. Setup-time input only — Rails never sees these.
+
+workspace_orchestrator_name() {
+  name="${CONDUCTOR_WORKSPACE_NAME:-${SUPERCONDUCTOR_WORKSPACE_NAME:-${SUPERSET_WORKSPACE_NAME:-${ORCA_WORKSPACE_NAME:-}}}}"
   [ -n "$name" ] || return 1
   printf '%s\n' "$name"
 }
@@ -54,11 +71,29 @@ workspace_detection_present() {
 }
 
 # --- Workspace name resolution ---
-# Tries (in order): persisted file, env var, detection + basename fallback.
+# What every reader uses: the project env var, then the persisted file. Same
+# two sources, same order, as config/database.yml.
 
 workspace_name() {
-  read_persisted_workspace_name ||
-    workspace_env_name ||
+  workspace_env_name || read_persisted_workspace_name
+}
+
+# --- Workspace name for setup ---
+# What bin/orchestrator/setup and bin/orchestrator/teardown use, and nothing
+# else. Adds the orchestrator's name for the workspace, then the directory name
+# for tools that name no workspace at all. Both outrank the persisted file: at
+# setup time the orchestrator's vars are the fresh truth, and the file may be a
+# leftover from an earlier or aborted workspace.
+#
+# Keep this fallback chain out of `workspace_name`. A checkout the orchestrator
+# merely detects — the main repo opened in the tool, say — is not a workspace
+# until setup names it, and until then it belongs on the shared database, which
+# is what config/database.yml will resolve for it either way.
+
+workspace_setup_name() {
+  workspace_env_name ||
+    workspace_orchestrator_name ||
+    read_persisted_workspace_name ||
     { workspace_detection_present && basename "$PWD"; }
 }
 
@@ -120,7 +155,7 @@ workspace_database_name() {
 # stale workspace name).
 
 persist_workspace_name() {
-  name="$(workspace_name 2>/dev/null || true)"
+  name="$(workspace_setup_name 2>/dev/null || true)"
   [ -n "$name" ] || return 1
 
   file="$(workspace_name_file)"

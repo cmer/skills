@@ -56,7 +56,7 @@ The dev server is exposed directly through the `scripts.dev` entry in `paseo.jso
 
 ## Workspace name resolution
 
-Paseo does not provide an explicit workspace name variable. Derive the workspace name from `basename "$PWD"`.
+Paseo does not provide an explicit workspace name variable. Derive the workspace name from `basename "$PWD"` at setup time and persist it; readers take it from the persisted file.
 
 ## Notes
 

@@ -17,7 +17,9 @@ set -e
 cd "$(dirname "$0")/../.."
 . bin/orchestrator/env
 
-workspace_name="$(workspace_name 2>/dev/null || true)"
+# Resolves the way setup did, so teardown drops exactly the databases setup
+# created — including when tmp/WORKSPACE_NAME is already gone by teardown time.
+workspace_name="$(workspace_setup_name 2>/dev/null || true)"
 
 refuse_main_checkout_for_folder_based_database_yml() {
   if [ -d .git ]; then
