@@ -73,7 +73,7 @@ Then integrate it cleanly:
 
 1. Create `references/orchestrators/<name>.md` following the format of the existing reference files (env vars, config file, port strategy, lifecycle, custom dev command, workspace name resolution, notes).
 2. Add a row to the summary table above.
-3. Add the orchestrator's detection var(s) to the relevant functions in `bin/orchestrator/env` (`workspace_detection_present`, `workspace_env_name`, `workspace_path`, and `workspace_needs_port_allocation` if it requires project-managed ports) and to the resolution chain in `bin/orchestrator/dev-port`.
+3. Add the orchestrator's detection var(s) to the relevant functions in `bin/orchestrator/env` (`workspace_detection_present`, `workspace_orchestrator_name`, `workspace_path`, and `workspace_needs_port_allocation` if it requires project-managed ports) and to the resolution chain in `bin/orchestrator/dev-port`. Leave `workspace_env_name` alone: it holds the project's own var and nothing else.
 4. Proceed through Phases 2–8 exactly as if the orchestrator had always been supported.
 
 This is the same path described in "Adding support for a new orchestrator" at the end of this file — a runtime request and a design-time extension converge on one clean flow.
@@ -171,7 +171,9 @@ The script provides these shell functions:
 
 | Function | Purpose |
 |----------|---------|
-| `workspace_name` | Resolves the workspace name (file → env → detection + basename) |
+| `workspace_name` | Resolves the workspace name for readers (project env var → persisted file) |
+| `workspace_orchestrator_name` | Returns the name the active orchestrator gives its workspace |
+| `workspace_setup_name` | Resolves the workspace name for setup/teardown (env var → orchestrator → file → detection + basename) |
 | `workspace_managed` | Returns true if running inside any orchestrator |
 | `workspace_detection_present` | Returns true if any orchestrator detection var is set |
 | `workspace_needs_port_allocation` | Returns true if the active orchestrator requires project-managed ports |
@@ -182,7 +184,7 @@ The script provides these shell functions:
 
 Key design principles:
 
-- **Workspace name resolution order**: persisted file (`tmp/WORKSPACE_NAME`) → orchestrator env vars → `basename "$PWD"` when an orchestrator is detected. The persisted file takes priority because orchestrator env vars may not be present in every shell context or after scripts are run outside an orchestrator-provided environment.
+- **Workspace name resolution order**: readers call `workspace_name`, which reads the project env var (`MYAPP_WORKSPACE_NAME`) then the persisted file (`tmp/WORKSPACE_NAME`) — the same two sources in the same order as `config/database.yml`, so a shell script and Rails can never resolve different databases. Orchestrator name vars and `basename "$PWD"` are setup-time inputs, kept in `workspace_setup_name` and reaching Rails only once persisted to the file; the persisted file outranks them for readers because orchestrator env vars are absent in many shell contexts, and they outrank the file during setup because a file left by an earlier or aborted workspace would otherwise name the new one. Don't let a merely-detected checkout (the main repo opened in the orchestrator) resolve a workspace name: nothing was set up for it, and it belongs on the shared database.
 - **Database config isolation**: if `config/database.yml` already derives names per worktree, preserve it and do not add shell database-name helpers that reimplement a different naming rule. If the project has stock fixed names, use the env/file pattern where `config/database.yml` reads a single project-level env var (e.g., `MYAPP_WORKSPACE_NAME`) and `tmp/WORKSPACE_NAME`; `bin/orchestrator/setup` bridges the gap by exporting the project env var after resolving the orchestrator-specific one.
 - **Port allocation policy**: `workspace_needs_port_allocation` returns true only for orchestrators that don't provide ports (Superset, super.engineering, Orca). Conductor and Paseo provide ports directly.
 
@@ -394,6 +396,6 @@ All orchestrator-specific detail lives in `references/orchestrators/<name>.md`, 
    - Labels file format (if any)
    - Any quirks or special behavior
 2. Add the orchestrator to the summary table at the top of this file.
-3. Add the orchestrator's detection var(s) to `bin/orchestrator/env` (`workspace_detection_present`, `workspace_env_name`, `workspace_path`, and `workspace_needs_port_allocation` if it needs project-managed ports) and to the resolution chain in `bin/orchestrator/dev-port`.
+3. Add the orchestrator's detection var(s) to `bin/orchestrator/env` (`workspace_detection_present`, `workspace_orchestrator_name`, `workspace_path`, and `workspace_needs_port_allocation` if it needs project-managed ports) and to the resolution chain in `bin/orchestrator/dev-port`. Leave `workspace_env_name` alone: it holds the project's own var and nothing else.
 
 Phase 3 needs no per-orchestrator edit — it reads each orchestrator's config schema straight from the reference file.

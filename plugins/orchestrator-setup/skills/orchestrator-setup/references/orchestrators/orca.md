@@ -59,8 +59,8 @@ This is configured in Orca's local settings as a `terminalQuickCommands` entry s
 
 ## Workspace name resolution
 
-- In setup/archive hooks: `$ORCA_WORKSPACE_NAME` is available.
-- In terminal shells: workspace name must be derived from `basename "$PWD"` or a persisted workspace name file.
+- In setup/archive hooks: `$ORCA_WORKSPACE_NAME` is available, and setup persists it so later shells can read it back.
+- In terminal shells: read the persisted workspace name file. `basename "$PWD"` is a setup-time last resort, not something a terminal should resolve — Orca sets `ORCA_WORKTREE_ID` in the main checkout's terminals too, so deriving a name there would isolate a checkout that was never set up.
 
 ## Notes
 
