@@ -71,3 +71,5 @@ user_invocable: true
 ## Version bumping
 
 Whenever you edit any file under a `plugins/*/` directory, bump the patch version in that plugin's `.claude-plugin/plugin.json` (e.g. `1.0.1` → `1.0.2`) and the `version` in `.claude-plugin/marketplace.json` (the parent marketplace). Bump once per commit cycle — not on every individual file edit, but always bump again after a commit so that the next round of changes gets a new version number.
+
+End any turn that reports on long-running or delegated work with a short status: **Goal**, **Done**, **Next**, **Needs you** (or "nothing").
