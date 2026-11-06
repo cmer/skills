@@ -5,6 +5,10 @@
 
 Superset is an agent orchestrator that manages git worktrees. It provides workspace metadata via environment variables but does not assign ports — the project must allocate its own port block.
 
+## Adapter
+
+`bin/orchestrator/adapters/superset.sh` (managed). Traits: `allocate-ports`, `port-labels`. Enable it by adding `superset` to `ORCHESTRATOR_ADAPTERS` in `bin/orchestrator/config`.
+
 ## Environment variables
 
 | Variable | Context | Purpose |

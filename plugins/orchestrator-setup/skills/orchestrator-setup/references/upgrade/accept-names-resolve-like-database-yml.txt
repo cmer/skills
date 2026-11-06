@@ -1,0 +1,14 @@
+# Accept file for: orchestrator-check compare BEFORE AFTER --accept <this file>
+#
+# Use when upgrading a project scaffolded before "Resolve workspace names the
+# same way database.yml does" (#6, 2026-08-29): its bin/orchestrator/env has
+# no workspace_setup_name function.
+#
+# Before #6, workspace_name (what readers use) also tried orchestrator name
+# vars and `basename "$PWD"`, so shells could resolve a workspace Rails never
+# used, and the main checkout opened in Orca or T3 Code got named after its
+# folder. Now readers use only the project env var and tmp/WORKSPACE_NAME,
+# like config/database.yml. Expected diff: probe rows of workspace_name and
+# workspace_managed only. Setup/teardown rows (databases) must not change.
+* | probe * | workspace_name
+* | probe * | workspace_managed

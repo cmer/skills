@@ -9,6 +9,10 @@ super.engineering is an agent orchestrator that manages git worktrees. It provid
 
 Superconductor has been renamed to super.engineering. During the transition, existing local paths and developer-facing names still use `superconductor`, including `~/.superconductor`, `.superconductor/config.json`, the `sc` CLI, and `SUPERCONDUCTOR_*` environment variables. Preserve those names exactly in generated config, scripts, and documentation that references developer-facing integration details.
 
+## Adapter
+
+`bin/orchestrator/adapters/superconductor.sh` (managed). Traits: `allocate-ports`, `port-labels`. Enable it by adding `superconductor` to `ORCHESTRATOR_ADAPTERS` in `bin/orchestrator/config`.
+
 ## Environment variables
 
 | Variable | Context | Purpose |

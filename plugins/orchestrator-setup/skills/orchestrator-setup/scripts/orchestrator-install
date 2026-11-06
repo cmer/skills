@@ -1,0 +1,110 @@
+#!/usr/bin/env sh
+#/ Usage: orchestrator-install PROJECT_DIR
+#/
+#/ Install or upgrade the managed bin/orchestrator files in a project: env,
+#/ port, dev-port, worktree-include, and one adapter per orchestrator listed in
+#/ ORCHESTRATOR_ADAPTERS in PROJECT_DIR/bin/orchestrator/config. Adapters no
+#/ longer listed are removed. Project-owned files (config, setup, teardown,
+#/ psql) are never touched.
+#/
+#/ Managed files are copied verbatim and replaced wholesale. A managed file in
+#/ the project that lacks the "Managed by the orchestrator-setup skill" stamp
+#/ is a hand-written file, and the install stops rather than overwrite it:
+#/ migrate it first (see SKILL.md, "Upgrading a layout 1 project").
+#/
+#/ Project adapters: an orchestrator the skill doesn't ship can still be
+#/ listed, as long as the project has its own unstamped
+#/ bin/orchestrator/adapters/<id>.sh. It is kept as is.
+
+set -eu
+
+project="${1:?Usage: orchestrator-install PROJECT_DIR}"
+skill_dir="$(cd "$(dirname "$0")/.." && pwd)"
+managed="$skill_dir/references/managed/bin/orchestrator"
+target="$project/bin/orchestrator"
+stamp="Managed by the orchestrator-setup skill"
+
+if [ ! -f "$target/config" ]; then
+  echo "Missing $target/config. Create it from references/examples/orchestrator-config.sh first." >&2
+  exit 1
+fi
+
+adapters="$(
+  ORCHESTRATOR_ADAPTERS=""
+  . "$target/config"
+  printf '%s\n' "$ORCHESTRATOR_ADAPTERS"
+)"
+
+is_managed() {
+  grep -q "$stamp" "$1"
+}
+
+skill_adapters=""
+project_adapters=""
+for id in $adapters; do
+  if [ -f "$managed/adapters/$id.sh" ]; then
+    skill_adapters="$skill_adapters $id"
+  elif [ -f "$target/adapters/$id.sh" ] && ! is_managed "$target/adapters/$id.sh"; then
+    project_adapters="$project_adapters $id"
+  else
+    echo "Unknown orchestrator '$id' in ORCHESTRATOR_ADAPTERS, and no project adapter" >&2
+    echo "at bin/orchestrator/adapters/$id.sh. Adapters the skill ships:" >&2
+    ls "$managed/adapters" | sed 's/\.sh$//; s/^/  /' >&2
+    exit 1
+  fi
+done
+
+refuse_unmanaged() {
+  if [ -f "$1" ] && ! is_managed "$1"; then
+    echo "Refusing to overwrite $1: it is not a managed file." >&2
+    echo "Migrate it to the managed layout first." >&2
+    exit 1
+  fi
+}
+
+for file in env port dev-port worktree-include; do
+  refuse_unmanaged "$target/$file"
+done
+for id in $skill_adapters; do
+  refuse_unmanaged "$target/adapters/$id.sh"
+done
+
+install_file() {
+  source_file="$1"
+  dest="$2"
+  if [ -f "$dest" ] && cmp -s "$source_file" "$dest"; then
+    echo "unchanged  ${dest#"$project"/}"
+  else
+    [ -f "$dest" ] && verb=updated || verb=added
+    mkdir -p "$(dirname "$dest")"
+    cp "$source_file" "$dest"
+    chmod 755 "$dest"
+    echo "$verb  ${dest#"$project"/}"
+  fi
+}
+
+for file in env port dev-port worktree-include; do
+  install_file "$managed/$file" "$target/$file"
+done
+for id in $skill_adapters; do
+  install_file "$managed/adapters/$id.sh" "$target/adapters/$id.sh"
+done
+for id in $project_adapters; do
+  echo "kept  bin/orchestrator/adapters/$id.sh (project adapter)"
+done
+
+if [ -d "$target/adapters" ]; then
+  for existing in "$target"/adapters/*.sh; do
+    [ -f "$existing" ] || continue
+    id="$(basename "$existing" .sh)"
+    case " $(echo $adapters) " in
+      *" $id "*) ;;
+      *)
+        if is_managed "$existing"; then
+          rm "$existing"
+          echo "removed  ${existing#"$project"/}"
+        fi
+        ;;
+    esac
+  done
+fi

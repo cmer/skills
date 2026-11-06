@@ -7,6 +7,10 @@
 
 Paseo is an agent orchestrator that manages git worktrees and provides port assignments via environment variables on all processes.
 
+## Adapter
+
+`bin/orchestrator/adapters/paseo.sh` (managed). Traits: none (Paseo provides ports, so no allocation). Enable it by adding `paseo` to `ORCHESTRATOR_ADAPTERS` in `bin/orchestrator/config`.
+
 ## Environment variables
 
 | Variable | Context | Purpose |

@@ -1,0 +1,9 @@
+# Accept file for: orchestrator-check compare BEFORE AFTER --accept <this file>
+#
+# Use when upgrading a project scaffolded from the first release (2026-06-24),
+# whose bin/orchestrator/env detects Conductor through CONDUCTOR_BIN_DIR.
+#
+# Conductor is now detected through CONDUCTOR_WORKSPACE_PATH or
+# CONDUCTOR_ROOT_PATH, which Conductor documents for terminals and scripts.
+# Expected diff: Conductor probe rows of workspace_detection_present only.
+conductor | probe * | workspace_detection_present

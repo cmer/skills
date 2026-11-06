@@ -6,6 +6,10 @@
 
 Orca is an agent orchestrator that manages git worktrees. It provides different environment variables depending on context (terminal shells vs. lifecycle hooks).
 
+## Adapter
+
+`bin/orchestrator/adapters/orca.sh` (managed). Traits: `allocate-ports`, `port-labels`. Enable it by adding `orca` to `ORCHESTRATOR_ADAPTERS` in `bin/orchestrator/config`.
+
 ## Environment variables
 
 | Variable | Context | Purpose |

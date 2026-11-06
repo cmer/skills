@@ -1,0 +1,13 @@
+# Accept file for: orchestrator-check compare BEFORE AFTER --accept <this file>
+#
+# Use only when upgrading a project whose config/database.yml uses the
+# worktree-folder scheme from a layout 1 (hand-adapted) teardown.
+#
+# Layout 1's worktree-folder teardown example exited right after dropping the
+# databases, before its port-release step, so Superset/super.engineering/Orca
+# (and T3 Code) worktrees kept their port block and .superset/ports.json until
+# a later allocation swept stale entries. Layout 2 releases them. Expected
+# diff: teardown rows lose this worktree's allocation and labels file. Any
+# other changed row is not covered by this file.
+* | teardown * | allocations
+* | teardown * | labels

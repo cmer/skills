@@ -1,0 +1,73 @@
+#!/usr/bin/env sh
+# Managed by the orchestrator-setup skill (layout 2). Do not edit: the skill
+# replaces this file wholesale. Project settings live in bin/orchestrator/config.
+#/
+#/ Usage: bin/orchestrator/worktree-include
+#/
+#/ Copy the gitignored files listed in .worktreeinclude from the main checkout
+#/ into this worktree. For orchestrators that create worktrees without honoring
+#/ .worktreeinclude themselves (T3 Code). bin/orchestrator/setup runs it first,
+#/ before anything that needs .env, config/master.key, or similar local files.
+#/
+#/ Rule (the one Claude Code uses): a file is copied when it matches a
+#/ .worktreeinclude pattern (gitignore syntax) AND git ignores it. Tracked files
+#/ are already in the worktree, and untracked files that aren't ignored are work
+#/ in progress, not local config.
+#/
+#/ Safe to re-run: it never overwrites a file that already exists in the
+#/ worktree, and it does nothing in the main checkout or without a
+#/ .worktreeinclude. It copies rather than symlinks, so a worktree cannot edit
+#/ the main checkout's secrets.
+#/
+#/ The patterns live in .worktreeinclude; the main checkout comes from
+#/ workspace_main_checkout_path in bin/orchestrator/env.
+
+set -eu
+cd "$(dirname "$0")/../.."
+ORCHESTRATOR_DIR=bin/orchestrator
+. bin/orchestrator/env
+
+target="$(pwd -P)"
+
+if ! source_root="$(workspace_main_checkout_path 2>/dev/null)" || [ ! -d "$source_root" ]; then
+  echo "Could not locate the main checkout; skipping .worktreeinclude." >&2
+  exit 0
+fi
+source_root="$(cd "$source_root" && pwd -P)"
+
+# The main checkout already has its own files.
+[ "$source_root" != "$target" ] || exit 0
+
+# Prefer the branch's own .worktreeinclude, then the main checkout's.
+if [ -f "$target/.worktreeinclude" ]; then
+  include_file="$target/.worktreeinclude"
+elif [ -f "$source_root/.worktreeinclude" ]; then
+  include_file="$source_root/.worktreeinclude"
+else
+  exit 0
+fi
+
+list_dir="$(mktemp -d)"
+trap 'rm -rf "$list_dir"' EXIT
+
+# Untracked files in the main checkout that match .worktreeinclude...
+git -C "$source_root" -c core.quotePath=false ls-files --others --ignored \
+  --exclude-from="$include_file" > "$list_dir/included"
+
+# ...narrowed to the ones git ignores. check-ignore exits 1 when none match.
+git -C "$source_root" -c core.quotePath=false check-ignore --stdin \
+  < "$list_dir/included" > "$list_dir/copy" || true
+
+copied=0
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  [ -f "$source_root/$path" ] || continue
+  if [ -e "$target/$path" ] || [ -L "$target/$path" ]; then
+    continue
+  fi
+  mkdir -p "$(dirname "$target/$path")"
+  cp -p "$source_root/$path" "$target/$path"
+  copied=$((copied + 1))
+done < "$list_dir/copy"
+
+echo "Copied $copied file(s) from .worktreeinclude."

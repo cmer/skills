@@ -1,273 +1,168 @@
 ---
 name: orchestrator-setup
-description: Configure a Rails project for agent orchestrators (Conductor, Superset, super.engineering, Orca, Paseo). Handles config files, workspace detection, database isolation, port management, and documentation.
+description: Configure a Rails project for agent orchestrators (Conductor, Superset, super.engineering, Orca, Paseo, T3 Code) — first-time setup, adding or removing an orchestrator, or upgrading older bin/orchestrator scripts. Handles config files, workspace detection, database isolation, ports, .worktreeinclude, and documentation.
 user_invocable: true
 ---
 
 # Orchestrator Setup
 
-Configure a Rails project to work with one or more agent orchestrators. These orchestrators manage git worktrees so developers can work on multiple branches simultaneously with isolated databases, ports, and dev servers.
+Configure a Rails project so agent orchestrators can run many git worktrees side by side, each with its own databases, ports, and dev server. Built for **Ruby on Rails** conventions: `config/database.yml`, `bin/` scripts, Bundler, Procfile-based dev servers.
 
-This skill is designed for **Ruby on Rails applications**. It understands Rails conventions (`config/database.yml`, `bin/` scripts, `Gemfile`, `bundle exec`, Procfile-based dev servers) and generates integration code accordingly.
+Other projects (Node, static sites) use the same layout with `ORCHESTRATOR_DATABASE_SCHEME=none`. Skip the database parts of Phases 0 and 6, and write `setup`, `teardown` and `bin/dev` for the project's own toolchain, keeping the three managed calls and `bin/orchestrator/dev-port`.
+
+The skill must be able to add any orchestrator to any project at any time without changing how the others behave. Two things make that safe, and every phase below leans on them: the **managed** layout, and **the check**.
 
 ## Supported orchestrators
 
-Each orchestrator's full specification — env vars, config file path and schema, port strategy, lifecycle hook names, custom dev command, and quirks — lives in its reference file under `references/orchestrators/`. **Read the reference file for every orchestrator the user selects before making any changes.** Do not rely on this table for config details; it is only a navigation index.
+Each orchestrator's specification (env vars, config file and schema, port strategy, lifecycle hooks, dev command, quirks) lives in its reference file. **Read the reference file for every orchestrator involved before changing anything**, including ones the project already supports. This table is only an index.
 
-| Orchestrator | Project allocates ports? | Reference |
-|--------------|--------------------------|-----------|
-| **Conductor** | No (tool provides) | `references/orchestrators/conductor.md` |
-| **Paseo** | No (tool provides) | `references/orchestrators/paseo.md` |
-| **Superset** | Yes (10-port block) | `references/orchestrators/superset.md` |
-| **super.engineering** | Yes (10-port block) | `references/orchestrators/superconductor.md` |
-| **Orca** | Yes (10-port block) | `references/orchestrators/orca.md` |
+| Orchestrator | Adapter id | Ports | Reference |
+|--------------|-----------|-------|-----------|
+| **Conductor** | `conductor` | Tool provides | `references/orchestrators/conductor.md` |
+| **Paseo** | `paseo` | Tool provides | `references/orchestrators/paseo.md` |
+| **Superset** | `superset` | Project allocates | `references/orchestrators/superset.md` |
+| **super.engineering** (formerly Superconductor) | `superconductor` | Project allocates | `references/orchestrators/superconductor.md` |
+| **Orca** | `orca` | Project allocates | `references/orchestrators/orca.md` |
+| **T3 Code** | `t3code` | Project allocates | `references/orchestrators/t3code.md` |
+
+`Superconductor` is the legacy name for super.engineering, not an unknown orchestrator.
+
+## The managed layout (layout 2)
+
+```
+bin/
+  dev                       project-owned (Rails convention)
+  orchestrator/
+    config                  project-owned: every project-specific value
+    setup                   project-owned: calls workspace_prepare_setup, then project steps
+    teardown                project-owned: calls workspace_begin/finish_teardown
+    psql                    project-owned, optional
+    env                     managed: detection, names, paths, lifecycle steps
+    port                    managed: 10-port block allocation
+    dev-port                managed: port resolution chain
+    worktree-include        managed: .worktreeinclude copy
+    adapters/<id>.sh        managed: one per enabled orchestrator
+```
+
+**Managed** files come verbatim from `references/managed/bin/orchestrator/`, carry the stamp `Managed by the orchestrator-setup skill (layout 2)`, and are only ever replaced wholesale by `scripts/orchestrator-install PROJECT_DIR`. Never edit a managed file in a project. If behavior must differ, the difference goes in `config`, in `setup` or `teardown`, or in a project adapter (see `references/adding-an-orchestrator.md`).
+
+Each adapter answers the same questions about its own orchestrator: is it active, what's the workspace path, name, and tool-provided port, where's the main checkout, is this the main checkout, and which **traits** apply (`allocate-ports`, `port-labels`, `worktree-include`, `discover-port`). `env` asks the enabled adapters in `ORCHESTRATOR_ADAPTERS` order. That's why adding an adapter can't change another orchestrator's code path. The contract is documented at the top of the managed `env`.
+
+## The check
+
+`scripts/orchestrator-check` records what a project's scripts do in every orchestrator context: setup hook, terminals, agent shells, main checkout, teardown. It runs in a throwaway repo with a real worktree. Stubs stand in for Rails, Bundler, npm and friends; the Rails stub evaluates the project's `config/database.yml`, so each row shows the actual database names. Real databases, ports and secrets are never touched.
+
+```sh
+ruby <skill-dir>/scripts/orchestrator-check record PROJECT_DIR --output /tmp/before.txt
+# ...change the project...
+ruby <skill-dir>/scripts/orchestrator-check record PROJECT_DIR --output /tmp/after.txt
+ruby <skill-dir>/scripts/orchestrator-check compare /tmp/before.txt /tmp/after.txt [--allow <adapter-id>]... [--accept FILE]...
+```
+
+- Take the **before** recording first, before you edit anything in a project that already has orchestrator scripts. Without it, the check can't prove anything.
+- If a recorded `setup` row exits non-zero because the project's setup calls a command the check doesn't stub (`yarn`, `bin/vite`, a rake wrapper), add `--stub <name>` to both recordings until setup runs through. A setup that dies early hides every row after it.
+- `--allow <id>` accepts changes in the scenario of each orchestrator you're adding or removing. `--accept FILE` accepts documented fixes (`references/upgrade/`). Every other `CHANGED` row is a regression. Fix it, or stop and show it to the user. Never accept a diff just because it looks harmless.
+- `compare` passes only when it prints `No unexpected changes.` Rows marked `ADDED` (functions old scripts lacked) are information, not failures.
 
 ## Phase 0 — Detect project state
 
-Before asking questions, inspect the project:
+Confirm it's a Rails app (`Gemfile`, `config/routes.rb`, `config/database.yml`, `bin/rails`), then detect:
 
-### Rails project detection
+- **Layout**, which picks the route through the phases below:
+  - **none**: no `bin/orchestrator/` and no legacy `bin/workspace-*` scripts → *fresh setup*.
+  - **layout 1**: `bin/orchestrator/` (or legacy `bin/workspace-env`, `bin/workspace-setup`, …) without the managed stamp in `env`. Hand-adapted scripts from an older version of this skill, or written by hand → *upgrade*: follow `references/upgrade/README.md` first, then come back for Phases 1–8.
+  - **layout 2**: `bin/orchestrator/env` carries the managed stamp → *change*: Phases 1–8 edit `config` and reinstall.
+- **Database adapter**: `adapter:` in `config/database.yml`. PostgreSQL is expected.
+- **Database isolation scheme** in `config/database.yml`:
+  - `worktree-folder`: ERB derives names from the `.git` pointer file (`gitdir: …/.git/worktrees/<name>`) or the worktree folder.
+  - `env-file`: ERB reads a project env var such as `*_WORKSPACE_NAME`, then `tmp/WORKSPACE_NAME`.
+  - `fixed`: static stock names, no isolation.
+  - `unknown`: too complex to classify. Treat it as user-owned and ask before changing it.
+- **Dev server**: `Procfile.dev`, `bin/dev`, Overmind/Foreman. **Frontend bundler**: Vite, esbuild, etc. Extra services need extra ports.
+- **Existing orchestrator configs**: `.conductor/settings.toml` (and `.local`), `paseo.json`, `.superset/config.json`, `.superconductor/config.json`, `orca.yaml`, `t3.json`. These tell you which orchestrators the project already supports, and which command wrappers it uses.
+- **`.worktreeinclude`**: whether it exists and which gitignored files it lists. If it's missing but a fresh worktree needs gitignored files to boot (`.env`, `config/master.key`), suggest one.
 
-Confirm this is a Rails application by checking for `Gemfile`, `config/routes.rb`, `config/database.yml`, and `bin/rails`.
-
-Detect:
-
-- **Database adapter** — check `config/database.yml` for `adapter:` (postgresql, mysql2, sqlite3). PostgreSQL is expected for workspace isolation.
-- **Database isolation scheme** — inspect `config/database.yml` for existing workspace/worktree-aware database names. Report one of:
-  - `git-worktree-folder`: ERB reads the `.git` pointer file (`gitdir: .../.git/worktrees/<name>`), current worktree folder, or related path/basename data to derive distinct database names per worktree.
-  - `workspace-env-file`: ERB reads a project env var such as `*_WORKSPACE_NAME`, `tmp/WORKSPACE_NAME`, or both.
-  - `fixed`: database names are static, stock Rails names and are not isolated per worktree.
-  - `unknown`: ERB is complex enough that you cannot confidently classify it; treat it as user-owned and ask before changing it.
-- **Dev server command** — look for `Procfile.dev`, `bin/dev`, or a Foreman/Overmind setup.
-- **Frontend bundler** — Vite (`vite.config.*`), Webpacker, esbuild, or Propshaft. Determines whether additional ports are needed (e.g., Vite dev server).
-- **Setup/teardown scripts** — look for `bin/setup`, `bin/orchestrator/setup`, `bin/orchestrator/teardown` (or legacy `bin/workspace-setup`, `bin/workspace-teardown`).
-- **Existing orchestrator configs** — check if any of the supported config files already exist (including `.conductor/settings.toml` / `.conductor/settings.local.toml` for Conductor).
-- **Existing workspace infrastructure** — look for `bin/orchestrator/` directory, or legacy `bin/workspace-env`, `bin/workspace-setup`, etc.
-
-State a brief detection summary before continuing.
+If any orchestrator scripts exist, take the check's **before** recording now. Then give a brief detection summary that names the route.
 
 ## Phase 1 — Choose orchestrators
 
-Ask the user which orchestrator(s) to configure:
+Ask: "Which agent orchestrators do you want to configure?" Multi-select: `Conductor`, `Paseo`, `Superset`, `super.engineering`, `Orca`, `T3 Code`. Pre-select the ones the project already supports. Removing one only happens when the user deselects it.
 
-- Question: "Which agent orchestrators do you want to configure?"
-- Options (multi-select): `Conductor`, `Paseo`, `Superset`, `super.engineering`, `Orca`
-- If the user names an orchestrator not in the list, proceed to Phase 1b.
-
-Treat `Superconductor` as the legacy name for `super.engineering`, not as an unknown orchestrator. Its reference file remains `references/orchestrators/superconductor.md` because local paths and developer-facing names still use `superconductor`.
-
-For each selected orchestrator, read its reference file at `references/orchestrators/<name>.md` or the mapped reference file named in the supported-orchestrators table.
-
-### Phase 1b — New orchestrator (not in the supported list)
-
-If the user names an unknown orchestrator, add it as a first-class supported orchestrator rather than bodging one-off branches into the scripts. Gather (use WebFetch/WebSearch on the tool's docs if needed):
-
-1. **Tool name**
-2. **Environment variables** — detection var, workspace name var (optional), port var (optional), home dir var (optional).
-3. **Config file format** — path and schema.
-4. **Port strategy** — tool provides port, or project allocates a block.
-5. **Lifecycle hook names** — setup / teardown (or equivalents).
-6. **Labels file** — does the tool read a port labels file? Format?
-
-Then integrate it cleanly:
-
-1. Create `references/orchestrators/<name>.md` following the format of the existing reference files (env vars, config file, port strategy, lifecycle, custom dev command, workspace name resolution, notes).
-2. Add a row to the summary table above.
-3. Add the orchestrator's detection var(s) to the relevant functions in `bin/orchestrator/env` (`workspace_detection_present`, `workspace_orchestrator_name`, `workspace_path`, and `workspace_needs_port_allocation` if it requires project-managed ports) and to the resolution chain in `bin/orchestrator/dev-port`. Leave `workspace_env_name` alone: it holds the project's own var and nothing else.
-4. Proceed through Phases 2–8 exactly as if the orchestrator had always been supported.
-
-This is the same path described in "Adding support for a new orchestrator" at the end of this file — a runtime request and a design-time extension converge on one clean flow.
+For an orchestrator not in the table, follow `references/adding-an-orchestrator.md`, then continue here as if it had always been supported.
 
 ## Phase 2 — Determine lifecycle commands
 
-Resolve the three lifecycle commands for this project:
-
-| Lifecycle | Purpose | Example |
+| Lifecycle | Purpose | Command |
 |-----------|---------|---------|
-| **setup** | Prepare a new worktree (install deps, create database, seed data) | `bin/orchestrator/setup` |
-| **teardown** | Clean up a worktree (drop database, release ports) | `bin/orchestrator/teardown` |
+| **setup** | Prepare a new worktree (deps, databases, local files, ports) | `bin/orchestrator/setup` |
+| **teardown** | Clean up a worktree (drop databases, release ports) | `bin/orchestrator/teardown` |
 | **dev** | Start the dev server | `bin/dev` |
 
-### If workspace scripts already exist
+Keep the project's command wrappers. If existing configs or docs run commands through `mise exec --`, `bundle exec`, `overmind`, or similar, use the same wrapper in every orchestrator config. An orchestrator config that already works is the strongest evidence.
 
-Use them directly.
+On a fresh setup, ask whether to scaffold `bin/orchestrator/` (recommended) or use raw commands the user provides.
 
-Preserve existing project command wrappers when they are already part of the project's workflow. For example, if existing orchestrator configs or project docs run scripts through `mise exec --`, `bundle exec`, `bin/rails`, `overmind`, or another local tool wrapper, use that same wrapper in every orchestrator config instead of writing a bare command. If one selected orchestrator already has a working config, treat its commands as strong evidence for the other orchestrator configs.
+## Phase 3 — Orchestrator config files
 
-### If workspace scripts don't exist
+For each selected orchestrator, create or update its project config exactly as its reference file says:
 
-Ask the user:
-
-- Question: "Should I scaffold workspace management scripts for this project?"
-- Options:
-  - `Yes, create bin/orchestrator/ scripts (Recommended)` — scaffold the scripts.
-  - `No, I'll provide the commands` — ask for raw commands to put in config files.
-
-When scaffolding, create scripts under `bin/orchestrator/`. `bin/dev` stays at the top level since it's a standard Rails convention. See Phase 5 for details.
-
-## Phase 3 — Create orchestrator config files
-
-For each selected orchestrator, create or update its config file exactly as documented in its reference file at `references/orchestrators/<name>.md`. The config path, schema, lifecycle key names, custom dev command, and any quirks all live there — read it before writing the file. Fill in the resolved lifecycle commands from Phase 2.
-
-Project config files to create or update:
-
-| Orchestrator | Project config file | Lifecycle commands represented |
-|--------------|---------------------|--------------------------------|
+| Orchestrator | Project config file | Lifecycle represented |
+|--------------|---------------------|-----------------------|
 | Conductor | `.conductor/settings.toml` | `scripts.setup`, `scripts.run`, `scripts.archive`, `scripts.run_mode` |
 | Paseo | `paseo.json` | `worktree.setup`, `worktree.teardown`, `scripts.dev` |
 | Superset | `.superset/config.json` | `setup`, `teardown`, `run` |
 | super.engineering | `.superconductor/config.json` | `setup`, `teardown`, `run` |
 | Orca | `orca.yaml` | `scripts.setup`, `scripts.archive` |
+| T3 Code | `t3.json` | `scripts[]`: setup (`runOnWorktreeCreate`), dev, manual teardown |
 
-Things the reference files spell out and you must honor:
+- Write project-scoped config whenever the tool supports it, instead of sending the user to an app UI.
+- Lifecycle key names differ between tools (Orca and Conductor use `archive`).
+- A tool with no dev command in its config gets its config for the hooks it does support. Handle the dev server as its reference file's "Custom dev command" section says.
+- A tool with no teardown hook (T3 Code) gets teardown as a manual action. Never wire teardown to a reversible event such as T3 Code's `runOnSettle`.
+- A tool that runs config only after it's registered in the app (T3 Code) gets registered through its own API when the session has one (`t3_project_*` MCP tools), merged with what the user already saved.
+- Edit other orchestrators' config files only to keep wrappers consistent, and only when the user agrees.
 
-- Agents must write project-scoped config files when the orchestrator supports them. Do not tell the user to finish setup in an app UI when a repository config file can express the same lifecycle commands.
-- Lifecycle key names differ between tools (e.g. Orca uses `archive` rather than `teardown`).
-- Some tools have no `run`/`dev` in their project config. Still create or update the project config file for the lifecycle hooks it does support, then handle the dev command as described in the orchestrator's "Custom dev command" section.
+## Phase 4 — .gitignore
 
-## Phase 4 — Update .gitignore
-
-Add gitignore entries for generated files that should not be committed:
+Add entries only for files this configuration generates, and only if they're missing:
 
 ```gitignore
 # Orchestrator-generated files (workspace-specific, not committed)
-.superset/ports.json
-
-# Only for the env/file database scheme
-tmp/WORKSPACE_NAME
+.superset/ports.json   # only if an enabled adapter has the port-labels trait
+tmp/WORKSPACE_NAME     # only for the env-file database scheme
 ```
 
-Only add entries for generated files the chosen configuration will actually create. Add `tmp/WORKSPACE_NAME` only when using the env/file database scheme; a preserved git-worktree-folder `database.yml` does not need that file. Check if the entries already exist before adding.
+## Phase 5 — Install bin/orchestrator
 
-## Phase 5 — Scaffold workspace detection and lifecycle scripts
+### 5a. `bin/orchestrator/config` (project-owned)
 
-If the project lacks workspace management scripts and the user opted to scaffold them, create the infrastructure under `bin/orchestrator/`. This is the core value: enabling multiple worktrees with isolated databases, ports, and dev servers.
+**Template**: `references/examples/orchestrator-config.sh`. Set `ORCHESTRATOR_PROJECT`, `ORCHESTRATOR_WORKSPACE_ENV`, `ORCHESTRATOR_DATABASE_SCHEME` (`env-file`, `worktree-folder`, or `none` for a project with no per-worktree database, from Phase 0), `ORCHESTRATOR_DEFAULT_PORT`, and `ORCHESTRATOR_PORT_LABELS` (services at offsets 0, 1, 2… matching `bin/dev`). Also set `ORCHESTRATOR_ADAPTERS`: the selected adapter ids, in the canonical order `conductor paseo superset superconductor orca t3code`. That order is the precedence if two tools' variables are ever set at once. A `fixed` database scheme becomes `env-file` in 6a.
 
-All orchestrator scripts live in `bin/orchestrator/` to keep them cleanly namespaced. The only exception is `bin/dev`, which stays at the top level as a standard Rails convention.
+On the *change* route, the only edit is usually `ORCHESTRATOR_ADAPTERS`.
 
-```
-bin/
-  dev                     # top-level (Rails convention)
-  orchestrator/
-    env                   # workspace detection (sourced by other scripts)
-    setup                 # worktree setup lifecycle
-    teardown              # worktree teardown lifecycle
-    dev-port              # port resolution
-    port                  # port block allocation
-    psql                  # database connection helper (optional)
+### 5b. Managed files
+
+```sh
+sh <skill-dir>/scripts/orchestrator-install PROJECT_DIR
 ```
 
-Complete working examples of every file are in `references/examples/`. Read each example before creating the corresponding file — they contain detailed adaptation instructions in their header comments. The examples use `MYAPP` / `myapp` as placeholders; replace these with the actual project name.
+It copies `env`, `port`, `dev-port`, `worktree-include` and the listed adapters, removes managed adapters that are no longer listed, keeps project adapters, and refuses to overwrite any file without the managed stamp. Don't copy managed files by hand.
 
-This phase builds the detection foundation and lifecycle hooks: `env`, `setup`, `teardown`. Phase 6 wires up ports, database isolation, and the dev server.
+### 5c. `bin/orchestrator/setup` and `teardown` (project-owned)
 
-### 5a. Workspace environment script — `bin/orchestrator/env`
+**Templates**: `references/examples/orchestrator-setup.sh` and `orchestrator-teardown.sh`. They hold only project steps around three managed calls:
 
-**Example**: `references/examples/orchestrator-env.sh`
+- `workspace_prepare_setup`: copies `.worktreeinclude` files when an adapter has the `worktree-include` trait, resolves, persists and exports the workspace name (env-file scheme), and allocates the port block (`allocate-ports`).
+- `workspace_begin_teardown`: returns 0 when there are databases to drop (env var exported), 1 when there's nothing to drop. It exits instead of dropping the main checkout's databases (worktree-folder) or orphaning a workspace's (env-file).
+- `workspace_finish_teardown`: releases the port block.
 
-This is the single source of truth for workspace detection. Every other script in `bin/orchestrator/` sources this file. **Never duplicate orchestrator detection logic outside this file.**
+Keep project-specific steps (JS installs, seeds, assets, extra cleanup) in these files. On an existing project, they already hold the project's steps. Don't touch them on the *change* route.
 
-The script provides these shell functions:
+## Phase 6 — Database, dev server, ports
 
-| Function | Purpose |
-|----------|---------|
-| `workspace_name` | Resolves the workspace name for readers (project env var → persisted file) |
-| `workspace_orchestrator_name` | Returns the name the active orchestrator gives its workspace |
-| `workspace_setup_name` | Resolves the workspace name for setup/teardown (env var → orchestrator → file → detection + basename) |
-| `workspace_managed` | Returns true if running inside any orchestrator |
-| `workspace_detection_present` | Returns true if any orchestrator detection var is set |
-| `workspace_needs_port_allocation` | Returns true if the active orchestrator requires project-managed ports |
-| `workspace_path` | Returns the workspace root path |
-| `workspace_database_prefix` | Optional: returns `<project>_<workspace>` or just `<project>` for the env/file database scheme |
-| `workspace_database_name ENV` | Optional: returns full database name like `<project>_<workspace>_development` for the env/file database scheme |
-| `persist_workspace_name` | Optional for the env/file database scheme: writes workspace name to `tmp/WORKSPACE_NAME` |
+### 6a. `config/database.yml`
 
-Key design principles:
-
-- **Workspace name resolution order**: readers call `workspace_name`, which reads the project env var (`MYAPP_WORKSPACE_NAME`) then the persisted file (`tmp/WORKSPACE_NAME`) — the same two sources in the same order as `config/database.yml`, so a shell script and Rails can never resolve different databases. Orchestrator name vars and `basename "$PWD"` are setup-time inputs, kept in `workspace_setup_name` and reaching Rails only once persisted to the file; the persisted file outranks them for readers because orchestrator env vars are absent in many shell contexts, and they outrank the file during setup because a file left by an earlier or aborted workspace would otherwise name the new one. Don't let a merely-detected checkout (the main repo opened in the orchestrator) resolve a workspace name: nothing was set up for it, and it belongs on the shared database.
-- **Database config isolation**: if `config/database.yml` already derives names per worktree, preserve it and do not add shell database-name helpers that reimplement a different naming rule. If the project has stock fixed names, use the env/file pattern where `config/database.yml` reads a single project-level env var (e.g., `MYAPP_WORKSPACE_NAME`) and `tmp/WORKSPACE_NAME`; `bin/orchestrator/setup` bridges the gap by exporting the project env var after resolving the orchestrator-specific one.
-- **Port allocation policy**: `workspace_needs_port_allocation` returns true only for orchestrators that don't provide ports (Superset, super.engineering, Orca). Conductor and Paseo provide ports directly.
-
-Only include detection checks for orchestrators the project actually supports. Remove the others.
-
-### 5b. Workspace setup script — `bin/orchestrator/setup`
-
-**Example**: `references/examples/orchestrator-setup.sh`
-
-Called by orchestrators during their setup lifecycle hook. Must be idempotent. Steps:
-
-1. Sources `bin/orchestrator/env`
-2. For the env/file database scheme: calls `persist_workspace_name` to write `tmp/WORKSPACE_NAME`, refuses to continue inside a detected orchestrator if the workspace name cannot be resolved, and exports `<PROJECT>_WORKSPACE_NAME` so Rails reads it in `config/database.yml`
-3. For an existing git-worktree-folder database scheme: skip the workspace-name export and unresolved-name guard; `bin/rails db:prepare` already targets the database for the current worktree
-4. Allocates a port block if `workspace_needs_port_allocation` returns true
-5. Installs dependencies (`bundle install`, plus JS bundler if present)
-6. Prepares databases: `bin/rails db:prepare` for development, `RAILS_ENV=test bin/rails db:prepare` for test
-
-### 5c. Workspace teardown script — `bin/orchestrator/teardown`
-
-**Example**: `references/examples/orchestrator-teardown.sh`
-
-Called by orchestrators during their teardown/archive lifecycle hook. Steps:
-
-1. Sources `bin/orchestrator/env`
-2. For the env/file database scheme: resolves workspace name and exports `<PROJECT>_WORKSPACE_NAME`
-3. For an existing git-worktree-folder database scheme: do not require a workspace name; instead refuse to run in the main checkout where `.git` is a directory, because that checkout owns the primary dev/test databases
-4. Drops each workspace database (development, test) with error recovery — individual drop failures should warn, not abort
-5. Releases the port block if `workspace_needs_port_allocation` returns true
-
-## Phase 6 — Configure ports, database, and dev server
-
-This phase wires up port resolution and allocation, database isolation, and the dev server: `dev-port`, `port`, `config/database.yml`, `bin/dev`, `Procfile.dev`, and the optional `psql` helper. Skip the port-allocation pieces (`port`, and the allocation branch of `dev-port`) if no configured orchestrator requires project-managed ports.
-
-### 6a. Dev port resolution — `bin/orchestrator/dev-port`
-
-**Example**: `references/examples/orchestrator-dev-port.sh`
-
-Outputs a single port number to stdout. Used by `bin/dev` and any script that needs to know the dev server port.
-
-Resolution priority chain (order matters):
-
-1. `$CONDUCTOR_PORT` — Conductor provides the first port in a 10-port workspace range
-2. `$PASEO_WORKTREE_PORT` — Paseo provides this on all worktree processes
-3. `$PASEO_PORT` — Paseo provides this on service processes only (fallback)
-4. `bin/orchestrator/port get` or `allocate` — for Superset/super.engineering/Orca
-5. Puma process discovery — fallback for shells where a tool-provided port is unavailable (scans `ps` output for puma with workspace name in title)
-6. `$PORT` — generic env var
-7. `3000` — default
-
-The puma discovery pattern matches process titles like `puma <ver> (tcp://0.0.0.0:<port>) [<workspace>]`. Adjust the awk pattern if using a different server.
-
-### 6b. Port allocation — `bin/orchestrator/port`
-
-**Example**: `references/examples/orchestrator-port.sh`
-
-Only needed if any configured orchestrator requires project-managed port allocation (Superset, super.engineering, Orca). Manages 10-port blocks.
-
-Subcommands: `get`, `allocate`, `reserve PORT`, `release`.
-
-Key implementation details:
-
-- **Storage**: Allocations stored in `$SUPERSET_HOME_DIR/port-allocations/<project>/` (defaults to `~/.superset/port-allocations/<project>/`). Each workspace gets a file keyed by `cksum` of the workspace path. The file contains two lines: the base port and the workspace path.
-- **Locking**: Uses `mkdir` for atomic lock acquisition with PID-based stale lock detection. Timeout after 10 seconds (100 × 0.1s).
-- **Allocation range**: 10000–59990 in steps of 10. Checks both that the block doesn't overlap existing allocations and that all 10 ports are not in use (`lsof` check).
-- **Browser-safe ports**: Skips the 10080 block because browsers reject port 10080 with `ERR_UNSAFE_PORT`.
-- **Stale cleanup**: On `allocate`, removes allocation files whose workspace path no longer exists on disk.
-- **Labels file**: Writes `.superset/ports.json` mapping base port offsets to service names (e.g., Rails, Vite). Update the labels in `write_labels()` to match the project's services.
-
-### 6c. Database isolation — `config/database.yml`
-
-**Example**: `references/examples/database.yml`
-
-Treat `config/database.yml` as a decision, not a rewrite target.
-
-If Phase 0 found an existing scheme that yields distinct development/test database names per worktree, preserve it. This includes either:
-
-- a git-worktree-folder scheme that derives the database suffix from the current worktree, commonly by reading the `.git` pointer file (`gitdir: <repo>/.git/worktrees/<wt>`) or current folder name, or
-- an env/file scheme that already reads `*_WORKSPACE_NAME`, `tmp/WORKSPACE_NAME`, or equivalent workspace state.
-
-All selected orchestrators in this skill create git worktrees, so folder-based derivation already isolates their databases. It needs no env var bridging, no `tmp/WORKSPACE_NAME`, and no setup-hook ordering to make Rails commands pick the right database. That is simpler and less fragile when every workspace is a git worktree.
-
-Only apply the example ERB pattern when `database.yml` is fixed/static and does not already isolate per worktree. The blank-slate pattern makes `config/database.yml` construct workspace-isolated database names without knowing about any specific orchestrator:
+Treat it as a decision, not a rewrite target. An existing per-worktree scheme (`worktree-folder` or `env-file`) is kept as is. All supported orchestrators create git worktrees, so folder derivation isolates them all without env bridging. Only a `fixed` file gets the env-file ERB from `references/examples/database.yml`:
 
 ```yaml
 <%
@@ -279,123 +174,42 @@ workspace = ["myapp", workspace_name].compact.join("_")
 %>
 ```
 
-This produces database names like:
+That gives `myapp_<workspace>_development` in a workspace and `myapp_development` outside one. The env var name must equal `ORCHESTRATOR_WORKSPACE_ENV`. Readers in shell (`workspace_name`) use the same two sources in the same order, so shell and Rails never disagree.
 
-- With workspace `feature-login`: `myapp_feature-login_development`
-- Without workspace: `myapp_development`
+### 6b. `bin/dev` and `Procfile.dev` (project-owned)
 
-The ERB block reads from two sources in order:
-1. `ENV["MYAPP_WORKSPACE_NAME"]` — set by `bin/orchestrator/setup` before Rails boots
-2. `tmp/WORKSPACE_NAME` — persisted file, used when the env var isn't available (e.g., running `rails console` directly)
+**Templates**: `references/examples/dev.sh` and `Procfile.dev`. `bin/dev` gets its base port from `bin/orchestrator/dev-port`, derives `VITE_PORT=$((PORT + 1))` and the other ports to match `ORCHESTRATOR_PORT_LABELS`, then starts Overmind (or Foreman). The resolution chain itself is managed: tool port, then allocated block, then puma discovery, then `$PORT`, then the default. See the header of the managed `dev-port`.
 
-All database entries (`development`, `test`) use `<%= workspace %>_<environment>` for their database name. Production/staging entries use `DATABASE_URL` and are unaffected.
+### 6c. `bin/orchestrator/psql` (project-owned, optional)
 
-Strategy comparison:
+**Template**: `references/examples/orchestrator-psql.sh`. It asks `config/database.yml` for the database name instead of rebuilding it in shell.
 
-- **Git-worktree-folder derivation**: database names come from the worktree path/folder or `.git` pointer. Prefer preserving this when already present. It works for Conductor, super.engineering, Superset, Orca, Paseo, and any other git-worktree-based tool without setup env bridging.
-- **`WORKSPACE_NAME` env/file derivation**: database names come from a project env var plus optional `tmp/WORKSPACE_NAME`. Use this for stock Rails templates or for orchestrators that do not expose a stable worktree folder. It requires setup/teardown scripts and shell helpers to export the same project env var before Rails commands that depend on it.
+## Phase 7 — Documentation
 
-### 6d. Dev server script — `bin/dev`
+Update `CLAUDE.md` and/or `AGENTS.md` (create a section in `CLAUDE.md` if neither exists):
 
-**Example**: `references/examples/dev.sh`
-
-Starts the dev server with workspace-aware port assignment. Steps:
-
-1. Calls `bin/orchestrator/dev-port` to get the base port
-2. Derives additional ports: `VITE_PORT=$((PORT + 1))`, etc.
-3. Exports all port env vars
-4. Starts the process manager (Overmind preferred, Foreman fallback) with `Procfile.dev`
-
-### 6e. Procfile — `Procfile.dev`
-
-**Example**: `references/examples/Procfile.dev`
-
-Each service reads its port from the env vars exported by `bin/dev`:
-
-```
-web: bin/rails s -p $PORT -b 0.0.0.0
-vite: npx vite --port $VITE_PORT
-```
-
-### 6f. Database helper — `bin/orchestrator/psql` (optional)
-
-**Example**: `references/examples/orchestrator-psql.sh`
-
-Convenience script that connects to the correct workspace database without needing to remember the name. Do not re-derive the database name in shell unless the project uses the matching env/file naming scheme. Prefer asking Rails/database.yml for the authoritative name, as shown in `references/examples/orchestrator-psql.sh`; this works for both preserved worktree-aware configs and the blank-slate env/file template.
-
-## Phase 7 — Update documentation
-
-Update `CLAUDE.md` and/or `AGENTS.md` with orchestrator information:
-
-1. List which orchestrators are supported and their detection env vars.
-2. Document the workspace database naming convention and whether the project uses git-worktree-folder or `WORKSPACE_NAME` env/file derivation.
-3. Document dev server startup and port discovery for each orchestrator.
-4. Document any orchestrator-specific quirks (e.g., Orca needs manual dev server start).
-
-If neither `CLAUDE.md` nor `AGENTS.md` exists, create a section in `CLAUDE.md`.
+1. Supported orchestrators and their detection variables.
+2. The database scheme and how databases are named.
+3. Dev server startup and port resolution per orchestrator.
+4. Quirks from the reference files (Orca: manual dev server; T3 Code: no teardown hook, actions must be imported).
+5. That `bin/orchestrator/` managed files are replaced by the orchestrator-setup skill and never edited by hand, and that project settings live in `bin/orchestrator/config`.
+6. If any adapter has the `worktree-include` trait: `.worktreeinclude` is the one list of gitignored files new worktrees get.
 
 ## Phase 8 — Verification
 
-Run checks after making changes:
-
-```sh
-# Verify shell scripts parse (for each created/modified script)
-sh -n bin/orchestrator/env
-sh -n bin/orchestrator/setup
-sh -n bin/orchestrator/teardown
-sh -n bin/orchestrator/dev-port
-sh -n bin/orchestrator/port
-
-# Verify database.yml parses (needs Rails env)
-ruby -e "require 'erb'; ERB.new(File.read('config/database.yml')).result"
-
-# Verify JSON config files parse
-ruby -e "require 'json'; JSON.parse(File.read('<config-file>'))"
-
-# Verify YAML config files parse
-ruby -e "require 'yaml'; YAML.load_file('<config-file>')"
-
-# Verify TOML config files parse
-python3 -c "import pathlib, tomllib; tomllib.loads(pathlib.Path('<config-file>').read_text())"
-```
+1. Syntax: `sh -n` on every file in `bin/orchestrator/` and `bin/orchestrator/adapters/`. Parse each orchestrator config as JSON, YAML or TOML. Render `config/database.yml` with `ruby -rerb -e "ERB.new(File.read('config/database.yml')).result"`.
+2. **The check**: record after, then compare against the before recording, with `--allow` for each orchestrator added or removed and `--accept` only for the files the upgrade guide names. It must print `No unexpected changes.`
+3. On a fresh setup (no before recording), record once and read the rows for each selected orchestrator: setup creates `<project>_<workspace>_*` (or folder-derived) databases, `dev-port` returns the tool port or an allocated block, teardown drops what setup created, and the main-checkout rows keep the shared databases.
 
 ## Checklist
 
-Run through every item before reporting done:
-
-- [ ] (Phases 0–1) Project type detected, lifecycle commands resolved, and orchestrator reference files read for all selected orchestrators
-- [ ] (Phase 3) Project config files created or updated for each selected orchestrator, per its reference file
-- [ ] (Phase 4) `.gitignore` updated for generated workspace files
-- [ ] (Phase 5) Detection and lifecycle scripts created or confirmed existing (if user opted in)
-  - [ ] `bin/orchestrator/env` — detection vars, workspace name resolution, port allocation policy
-  - [ ] `bin/orchestrator/setup` — dependency install, database creation, port allocation
-  - [ ] `bin/orchestrator/teardown` — database drop, port release
-- [ ] (Phase 6) Ports, database, and dev server configured
-  - [ ] `bin/orchestrator/dev-port` — port resolution chain for all configured orchestrators
-  - [ ] `bin/orchestrator/port` — port block allocation (if any orchestrator requires it)
-  - [ ] `config/database.yml` made workspace-aware OR confirmed an existing per-worktree scheme and left it intact
-  - [ ] `bin/orchestrator/setup`, `bin/orchestrator/teardown`, and `bin/orchestrator/psql` match the chosen database isolation scheme
-  - [ ] `bin/dev` — port resolution, env var export, process manager startup
-  - [ ] `Procfile.dev` — services read ports from env vars
-  - [ ] `bin/orchestrator/psql` — optional database helper
-- [ ] All `MYAPP`/`myapp` placeholders replaced with actual project name
-- [ ] (Phase 7) `CLAUDE.md` / `AGENTS.md` updated with orchestrator documentation
-- [ ] (Phase 8) Shell scripts pass `sh -n` syntax check; config files parse as valid JSON/YAML
-- [ ] Custom dev command handled per each orchestrator's reference file
-
-## Adding support for a new orchestrator
-
-All orchestrator-specific detail lives in `references/orchestrators/<name>.md`, so extending the skill is mostly authoring one reference file. This is the same flow as Phase 1b — the only difference is that here you do it ahead of time rather than in response to a user request.
-
-1. Create `references/orchestrators/<name>.md` following the format of existing reference files. Document:
-   - Environment variables (detection var, workspace name var, port var, home dir var)
-   - Config file path and schema
-   - Port strategy
-   - Lifecycle hook names
-   - Custom dev command (how the dev server is started)
-   - Labels file format (if any)
-   - Any quirks or special behavior
-2. Add the orchestrator to the summary table at the top of this file.
-3. Add the orchestrator's detection var(s) to `bin/orchestrator/env` (`workspace_detection_present`, `workspace_orchestrator_name`, `workspace_path`, and `workspace_needs_port_allocation` if it needs project-managed ports) and to the resolution chain in `bin/orchestrator/dev-port`. Leave `workspace_env_name` alone: it holds the project's own var and nothing else.
-
-Phase 3 needs no per-orchestrator edit — it reads each orchestrator's config schema straight from the reference file.
+- [ ] Layout and route detected; before recording taken if scripts existed; reference file read for every orchestrator involved
+- [ ] Orchestrator configs written per reference file, wrappers preserved, app registration done where needed (T3 Code) or the manual step named in the summary
+- [ ] `.gitignore` covers only generated files this configuration creates
+- [ ] `bin/orchestrator/config` filled in; `ORCHESTRATOR_ADAPTERS` lists the selected ids in canonical order
+- [ ] Managed files installed by `orchestrator-install`, none edited by hand
+- [ ] `setup` / `teardown` call the managed steps and keep every project-specific step
+- [ ] `config/database.yml` kept, or made env-file isolated if it was fixed
+- [ ] `bin/dev` port offsets match `ORCHESTRATOR_PORT_LABELS`
+- [ ] `CLAUDE.md` / `AGENTS.md` updated
+- [ ] Syntax checks pass; the check prints `No unexpected changes.` (or, on a fresh setup, its rows were reviewed)

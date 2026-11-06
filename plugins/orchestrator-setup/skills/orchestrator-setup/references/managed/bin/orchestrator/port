@@ -1,8 +1,12 @@
 #!/usr/bin/env sh
+# Managed by the orchestrator-setup skill (layout 2). Do not edit: the skill
+# replaces this file wholesale. Project settings live in bin/orchestrator/config.
+#/
 #/ Usage: bin/orchestrator/port [get|allocate|reserve PORT|release]
 #/
 #/ Manage 10-port block allocation for workspace isolation.
-#/ Required when orchestrators don't provide ports (Superset, super.engineering, Orca).
+#/ Required when orchestrators don't provide ports (Superset, super.engineering,
+#/ Orca, T3 Code).
 #/
 #/ Subcommands:
 #/   get       — Print allocated port if one exists, or exit 1.
@@ -15,23 +19,24 @@
 #/ a file keyed by a checksum of the workspace path.
 #/
 #/ Note: the ~/.superset/port-allocations path and the .superset/ports.json
-#/ labels file are a deliberately SHARED allocation convention reused by
-#/ Superset, super.engineering, and Orca — not a dependency on Superset itself.
-#/ A project supporting any of those uses this one allocation store.
+#/ labels file are a deliberately SHARED allocation convention reused by every
+#/ orchestrator that assigns no ports — not a dependency on Superset itself.
+#/ The labels file is written only for orchestrators that read it
+#/ (the port-labels adapter trait).
 #/
-#/ To adapt for your project:
-#/   1. Replace "myapp" in the allocations_dir path with your project name.
-#/   2. Update write_labels to list your project's services and port offsets.
-#/   3. Adjust the port range (10000–59990) if needed.
+#/ Settings (bin/orchestrator/config): ORCHESTRATOR_PROJECT names the
+#/ allocation directory; ORCHESTRATOR_PORT_LABELS lists the services at
+#/ offsets 0, 1, 2… of the block.
 
 set -eu
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+ORCHESTRATOR_DIR="$DIR"
 . "$DIR/env"
 
 action="${1:-allocate}"
 port_home="${SUPERSET_HOME_DIR:-${HOME}/.superset}"
-allocations_dir="$port_home/port-allocations/myapp"
+allocations_dir="$port_home/port-allocations/$ORCHESTRATOR_PROJECT"
 lock_dir="$allocations_dir/.lock"
 workspace_path="$(workspace_path)"
 workspace_id="$(printf '%s' "$workspace_path" | cksum | awk '{print $1}')"
@@ -62,20 +67,28 @@ lock() {
 }
 
 # --- Labels file ---
-# Written to .superset/ports.json so orchestrator UIs can display service names.
-# Update the labels to match your project's services.
+# Written to .superset/ports.json for orchestrator UIs that show service names,
+# one entry per ORCHESTRATOR_PORT_LABELS item (comma-separated, no quotes).
 
 write_labels() {
   port="$1"
+  workspace_wants_port_labels || return 0
   mkdir -p .superset
-  cat > .superset/ports.json <<EOF
-{
-  "ports": [
-    { "port": $port, "label": "Rails" },
-    { "port": $((port + 1)), "label": "Vite" }
-  ]
-}
-EOF
+  {
+    printf '{\n  "ports": [\n'
+    offset=0
+    separator=""
+    old_ifs="$IFS"
+    IFS=,
+    for label in $ORCHESTRATOR_PORT_LABELS; do
+      printf '%s    { "port": %s, "label": "%s" }' "$separator" "$((port + offset))" "$label"
+      separator=",
+"
+      offset=$((offset + 1))
+    done
+    IFS="$old_ifs"
+    printf '\n  ]\n}\n'
+  } > .superset/ports.json
 }
 
 read_port() {

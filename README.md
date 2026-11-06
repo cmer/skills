@@ -38,7 +38,9 @@ Scaffolds a shadcn-backed design system into a React + Tailwind v4 codebase: ini
 
 `orchestrator-setup`
 
-Configures a Rails project for agent orchestrators including Conductor, Paseo, Superset, super.engineering, Orca, and others. It detects existing workspace conventions, creates or updates orchestrator config files, scaffolds optional `bin/orchestrator/` lifecycle scripts, handles database isolation, manages dev-server ports, and documents the resulting setup for future agents.
+Configures a Rails project for agent orchestrators including Conductor, Paseo, Superset, super.engineering, Orca, T3 Code, and others. It detects existing workspace conventions, creates or updates orchestrator config files, installs `bin/orchestrator/` lifecycle scripts, handles database isolation, manages dev-server ports, copies `.worktreeinclude` files for tools that don't, and documents the resulting setup for future agents.
+
+Orchestrator support is one adapter file per tool, installed verbatim; project settings live in `bin/orchestrator/config`. Orchestrators can be added or removed at any time, and older hand-adapted scripts can be upgraded. A bundled check (`scripts/orchestrator-check`) simulates every orchestrator in a sandbox before and after each change, to prove the others still behave the same.
 
 ```
 /plugin install orchestrator-setup@cmer-skills

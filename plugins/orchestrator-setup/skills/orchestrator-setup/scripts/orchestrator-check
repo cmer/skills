@@ -1,0 +1,515 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# orchestrator-check — record what a project's bin/orchestrator scripts do in
+# every orchestrator context, so a change can be proven not to alter them.
+#
+# Usage:
+#   orchestrator-check record PROJECT_DIR [--stub NAME]... [--output FILE]
+#   orchestrator-check compare BEFORE AFTER [--allow SCENARIO]... [--accept FILE]
+#
+# record copies the project's orchestrator scripts, config/database.yml,
+# .gitignore and .worktreeinclude into a throwaway git repo with one real
+# worktree, then simulates each supported orchestrator: setup hook, terminals,
+# agent shells, the main checkout, teardown. It never touches real databases,
+# real port allocations, or real secrets:
+#
+#   - HOME and SUPERSET_HOME_DIR point into the sandbox.
+#   - bin/rails, bundle, npm, yarn, pnpm, bun, npx, mise, overmind, foreman are
+#     stubs that log their arguments. The bin/rails stub also evaluates
+#     config/database.yml and logs the database names the command would hit.
+#   - lsof reports no listeners and ps reports no processes, so port results
+#     don't depend on what runs on this machine.
+#   - Files .worktreeinclude would copy get placeholder contents.
+#
+# Pass --stub NAME for any other command setup or teardown runs (for example
+# --stub yarn --stub bin/vite). A NAME starting with bin/ is created inside
+# the repo; anything else goes on PATH.
+#
+# compare prints every row that changed between two recordings and exits 1 if
+# any row changed or disappeared. A row whose old value was "missing" (the
+# function didn't exist) is reported as added, not as a change. --allow
+# SCENARIO accepts changes in that scenario (the orchestrator being added).
+# --accept FILE accepts the changes listed in a file of
+# "scenario | step | key" lines, each part a glob (documented behavior fixes,
+# see references/upgrade/).
+
+require "fileutils"
+require "open3"
+require "tmpdir"
+
+FORMAT = "orchestrator-check v1"
+WORKTREE_NAME = "feature-x"
+
+# Each scenario: contexts => [location, env]. Values :main / :wt expand to the
+# sandbox paths. "hook" runs setup and teardown; "main" contexts also run
+# setup/teardown in the main checkout (a manual run there).
+SCENARIOS = {
+  "none" => {
+    hook: "shell@worktree",
+    main: ["shell@main"],
+    contexts: {
+      "shell@worktree" => [:wt, {}],
+      "shell@main" => [:main, {}],
+    },
+  },
+  "conductor" => {
+    hook: "hook@worktree",
+    main: [],
+    contexts: {
+      "hook@worktree" => [:wt, {
+        "CONDUCTOR_WORKSPACE_PATH" => :wt, "CONDUCTOR_WORKSPACE_NAME" => "conductor-ws",
+        "CONDUCTOR_ROOT_PATH" => :main, "CONDUCTOR_DEFAULT_BRANCH" => "main",
+        "CONDUCTOR_IS_LOCAL" => "1", "CONDUCTOR_PORT" => "55100",
+      }],
+      "terminal-without-port@worktree" => [:wt, {
+        "CONDUCTOR_WORKSPACE_PATH" => :wt, "CONDUCTOR_WORKSPACE_NAME" => "conductor-ws",
+        "CONDUCTOR_ROOT_PATH" => :main,
+      }],
+    },
+  },
+  "paseo" => {
+    hook: "hook@worktree",
+    main: [],
+    contexts: {
+      "hook@worktree" => [:wt, { "PASEO_WORKTREE_PATH" => :wt, "PASEO_WORKTREE_PORT" => "55200" }],
+      "service@worktree" => [:wt, { "PASEO_WORKTREE_PATH" => :wt, "PASEO_PORT" => "55201" }],
+    },
+  },
+  "superset" => {
+    hook: "hook@worktree",
+    main: [],
+    contexts: {
+      "hook@worktree" => [:wt, {
+        "SUPERSET_WORKSPACE_PATH" => :wt, "SUPERSET_WORKSPACE_NAME" => "superset-ws",
+        "SUPERSET_HOME_DIR" => :superset_home,
+      }],
+    },
+  },
+  "superconductor" => {
+    hook: "hook@worktree",
+    main: [],
+    contexts: {
+      "hook@worktree" => [:wt, {
+        "SUPERCONDUCTOR_WORKTREE_PATH" => :wt, "SUPERCONDUCTOR_WORKSPACE_NAME" => "superconductor-ws",
+        "SUPERCONDUCTOR_ROOT_PATH" => :root,
+      }],
+    },
+  },
+  "orca" => {
+    hook: "hook@worktree",
+    main: ["terminal@main"],
+    contexts: {
+      "hook@worktree" => [:wt, { "ORCA_WORKTREE_PATH" => :wt, "ORCA_WORKSPACE_NAME" => "orca-ws" }],
+      "terminal@worktree" => [:wt, { "ORCA_WORKTREE_ID" => "orca-worktree-id" }],
+      "terminal@main" => [:main, { "ORCA_WORKTREE_ID" => "orca-main-id" }],
+    },
+  },
+  "t3code" => {
+    hook: "hook@worktree",
+    main: ["terminal@main"],
+    contexts: {
+      "hook@worktree" => [:wt, { "T3CODE_PROJECT_ROOT" => :main, "T3CODE_WORKTREE_PATH" => :wt }],
+      "terminal@worktree" => [:wt, { "T3CODE_PROJECT_ROOT" => :main, "T3CODE_WORKTREE_PATH" => :wt }],
+      "agent@worktree" => [:wt, { "T3CODE_THREAD_ID" => "t3-thread" }],
+      "agent-in-subdir@worktree" => [:wt_subdir, { "T3CODE_THREAD_ID" => "t3-thread" }],
+      # Worktree location reached through a symlink: must share the agent's port.
+      "terminal-via-symlink@worktree" => [:wt, { "T3CODE_PROJECT_ROOT" => :main, "T3CODE_WORKTREE_PATH" => :wt_link }],
+      "terminal@main" => [:main, { "T3CODE_PROJECT_ROOT" => :main }],
+      "agent@main" => [:main, { "T3CODE_THREAD_ID" => "t3-thread" }],
+    },
+  },
+}.freeze
+
+BOOL_FUNCTIONS = %w[
+  workspace_detection_present workspace_managed workspace_needs_port_allocation
+  workspace_wants_port_labels workspace_needs_worktree_include_copy
+].freeze
+
+VALUE_FUNCTIONS = %w[
+  workspace_name workspace_setup_name workspace_orchestrator_name workspace_path
+  workspace_main_checkout_path
+].freeze
+
+DEFAULT_STUBS = %w[bundle rails npm npx yarn pnpm bun mise overmind foreman lsof ps].freeze
+
+HELPER = <<~'RUBY'
+  # Stub dispatcher for orchestrator-check. Logs each call; bin/rails also
+  # reports the databases config/database.yml resolves for the call.
+  require "erb"
+  require "yaml"
+
+  name = ARGV.shift
+  log = ENV.fetch("ORCHESTRATOR_CHECK_LOG")
+
+  def database_names(env)
+    file = File.join(Dir.pwd, "config/database.yml")
+    return "no config/database.yml" unless File.file?(file)
+
+    rails = Module.new
+    root = Dir.pwd
+    rails.define_singleton_method(:root) { root }
+    rails.define_singleton_method(:env) { env }
+    Object.const_set(:Rails, rails) unless defined?(::Rails)
+    rendered = ERB.new(File.read(file)).result(TOPLEVEL_BINDING)
+    config = YAML.respond_to?(:unsafe_load) ? YAML.unsafe_load(rendered) : YAML.load(rendered)
+    entry = config.is_a?(Hash) ? config[env] : nil
+    return "no #{env} entry" unless entry.is_a?(Hash)
+
+    names = if entry.key?("database")
+      [entry["database"].to_s]
+    else
+      entry.values.select { |v| v.is_a?(Hash) && v.key?("database") }.map { |v| v["database"].to_s }
+    end
+    names.empty? ? "none" : names.join(",")
+  rescue Exception => e # rubocop:disable Lint/RescueException
+    "error: #{e.class}: #{e.message.lines.first.to_s.strip}"
+  end
+
+  case name
+  when "lsof"
+    exit 1
+  when "ps"
+    exit 0
+  when "mise", "bundle"
+    if ARGV.first == "exec"
+      rest = ARGV.drop(1)
+      rest = rest.drop(1) if rest.first == "--"
+      exec(*rest) unless rest.empty?
+    end
+    File.open(log, "a") { |f| f.puts([name, *ARGV].join(" ")) }
+  when "rails", "bin/rails"
+    env = ENV["RAILS_ENV"].to_s.empty? ? "development" : ENV["RAILS_ENV"]
+    File.open(log, "a") { |f| f.puts("rails #{ARGV.join(' ')} [RAILS_ENV=#{env} databases=#{database_names(env)}]") }
+  else
+    File.open(log, "a") { |f| f.puts([name, *ARGV].join(" ")) }
+  end
+RUBY
+
+class Recorder
+  def initialize(project, stubs)
+    @project = File.realpath(project)
+    @extra_stubs = stubs
+    @rows = []
+  end
+
+  def run
+    SCENARIOS.each do |scenario, spec|
+      Dir.mktmpdir("orchestrator-check") do |tmp|
+        @root = File.realpath(tmp)
+        build_sandbox
+        record_scenario(scenario, spec)
+      end
+    end
+    ["# #{FORMAT}", *@rows].join("\n") + "\n"
+  end
+
+  private
+
+  attr_reader :root
+
+  def main
+    File.join(root, "main")
+  end
+  def worktree
+    File.join(root, "worktrees", WORKTREE_NAME)
+  end
+  def home
+    File.join(root, "home")
+  end
+  def superset_home
+    File.join(home, ".superset")
+  end
+  def stub_dir
+    File.join(root, "stubs")
+  end
+  def log_file
+    File.join(root, "commands.log")
+  end
+
+  # --- sandbox -------------------------------------------------------------
+
+  def build_sandbox
+    FileUtils.mkdir_p([main, home, stub_dir, File.dirname(worktree)])
+    copy_project_files
+    write_stubs
+    create_placeholders
+    git(main, "init", "-q", "-b", "main")
+    git(main, "add", "-A")
+    git(main, "-c", "user.email=check@example.com", "-c", "user.name=check", "commit", "-q", "-m", "fixture")
+    git(main, "worktree", "add", "-q", worktree, "-b", WORKTREE_NAME)
+    FileUtils.mkdir_p(File.join(worktree, "config"))
+    File.symlink(File.dirname(worktree), File.join(root, "worktrees-link"))
+  end
+
+  def copy_project_files
+    entries = Dir.glob(File.join(@project, "bin", "{orchestrator,workspace-*,*-workspace*}"))
+    entries += %w[config/database.yml .gitignore .worktreeinclude].map { |p| File.join(@project, p) }
+    entries.each do |source|
+      next unless File.exist?(source)
+
+      target = File.join(main, source.delete_prefix("#{@project}/"))
+      FileUtils.mkdir_p(File.dirname(target))
+      FileUtils.cp_r(source, target, preserve: true)
+    end
+  end
+
+  def write_stubs
+    File.write(File.join(stub_dir, "helper.rb"), HELPER)
+    (DEFAULT_STUBS + @extra_stubs.reject { |s| s.start_with?("bin/") }).uniq.each do |name|
+      write_stub(File.join(stub_dir, name), name)
+    end
+    (["bin/rails"] + @extra_stubs.select { |s| s.start_with?("bin/") }).uniq.each do |name|
+      write_stub(File.join(main, name), name)
+    end
+  end
+
+  def write_stub(path, name)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "#!/bin/sh\nexec ruby \"#{File.join(stub_dir, 'helper.rb')}\" #{name} \"$@\"\n")
+    File.chmod(0o755, path)
+  end
+
+  # Names of the project's gitignored files that .worktreeinclude would copy,
+  # recreated with placeholder contents. Real contents never leave the project.
+  def create_placeholders
+    include_file = File.join(@project, ".worktreeinclude")
+    return unless File.file?(include_file) && File.exist?(File.join(@project, ".git"))
+
+    listed, = Open3.capture2("git", "-C", @project, "-c", "core.quotePath=false", "ls-files", "--others",
+                             "--ignored", "--exclude-from=#{include_file}")
+    ignored, = Open3.capture2("git", "-C", @project, "-c", "core.quotePath=false", "check-ignore", "--stdin",
+                              stdin_data: listed)
+    ignored.lines.map(&:chomp).reject(&:empty?).each do |path|
+      target = File.join(main, path)
+      FileUtils.mkdir_p(File.dirname(target))
+      File.write(target, "placeholder\n")
+    end
+  end
+
+  def git(dir, *args)
+    out, status = Open3.capture2e("git", "-C", dir, *args)
+    raise "git #{args.join(' ')} failed: #{out}" unless status.success?
+
+    out
+  end
+
+  # --- running -------------------------------------------------------------
+
+  def location_dir(location)
+    case location
+    when :main then main
+    when :wt then worktree
+    when :wt_subdir then File.join(worktree, "config")
+    end
+  end
+
+  def expand(value)
+    case value
+    when :main then main
+    when :wt then worktree
+    when :wt_link then File.join(root, "worktrees-link", WORKTREE_NAME)
+    when :root then root
+    when :superset_home then superset_home
+    else value
+    end
+  end
+
+  def run_in(location, env, *argv)
+    dir = location_dir(location)
+    base = {
+      "PATH" => "#{stub_dir}:#{ENV.fetch('PATH', '/usr/bin:/bin')}",
+      "HOME" => home,
+      "PWD" => dir,
+      "LANG" => "C",
+      "TMPDIR" => File.join(root, "tmp-dir"),
+      "ORCHESTRATOR_CHECK_LOG" => log_file,
+    }
+    FileUtils.mkdir_p(base["TMPDIR"])
+    full_env = base.merge(env.transform_values { |v| expand(v) })
+    out, err, status = Open3.capture3(full_env, *argv, chdir: dir, unsetenv_others: true)
+    [out, err, status.exitstatus]
+  end
+
+  def script(location, *candidates)
+    candidates.find { |c| File.file?(File.join(location_dir(location), c)) }
+  end
+
+  def env_file(location)
+    script(location, "bin/orchestrator/env", "bin/workspace-env")
+  end
+
+  def run_lifecycle(scenario, step, location, env, candidates)
+    path = script(location, *candidates)
+    return row(scenario, step, "script", "missing") unless path
+
+    File.write(log_file, "")
+    _out, err, code = run_in(location, env, "sh", path)
+    row(scenario, step, "exit", code)
+    row(scenario, step, "stderr", err.lines.grep(/error|refus|warn/i).map(&:strip).join(" ; ")) if code != 0
+    row(scenario, step, "commands", File.read(log_file).lines.map(&:strip).join(" ; "))
+    row(scenario, step, "name_file", read_or_absent(File.join(location_dir(location), "tmp/WORKSPACE_NAME")))
+    row(scenario, step, "ignored_files", ignored_files(location))
+    row(scenario, step, "labels", read_or_absent(File.join(location_dir(location), ".superset/ports.json")))
+    row(scenario, step, "allocations", allocations)
+  end
+
+  def probe_context(scenario, context, location, env)
+    file = env_file(location)
+    step = "probe #{context}"
+    if file
+      BOOL_FUNCTIONS.each { |fn| row(scenario, step, fn, call_function(location, env, file, fn, bool: true)) }
+      VALUE_FUNCTIONS.each { |fn| row(scenario, step, fn, call_function(location, env, file, fn, bool: false)) }
+    else
+      row(scenario, step, "env", "missing")
+    end
+    dev_port = %w[bin/orchestrator/dev-port bin/workspace-dev-port bin/dev-port].find do |c|
+      File.file?(File.join(location_dir(:wt), c))
+    end
+    if dev_port
+      # dev-port expects to run from the checkout root; agents in a subdir
+      # still exercise workspace_path above.
+      run_location = location == :wt_subdir ? :wt : location
+      out, _err, code = run_in(run_location, env, "sh", dev_port)
+      row(scenario, step, "dev-port", "#{out.strip} (exit #{code})")
+    else
+      row(scenario, step, "dev-port", "missing")
+    end
+  end
+
+  def call_function(location, env, file, fn, bool:)
+    rel = File.join(location_dir(:wt), file).delete_prefix("#{location_dir(:wt)}/")
+    dir = location_dir(location)
+    env_path = location == :wt_subdir ? File.join(worktree, rel) : File.join(dir, rel)
+    snippet = <<~SH
+      . "#{env_path}" >/dev/null 2>&1
+      if ! command -v #{fn} >/dev/null 2>&1; then echo missing; exit 0; fi
+      #{bool ? "if #{fn}; then echo true; else echo false; fi" : "v=\"$(#{fn} 2>/dev/null)\"; rc=$?; echo \"${v:-<empty>} (exit $rc)\""}
+    SH
+    out, _err, _code = run_in(location, env, "sh", "-c", snippet)
+    out.strip
+  end
+
+  def record_scenario(scenario, spec)
+    hook_location, hook_env = spec[:contexts].fetch(spec[:hook])
+    setup = %w[bin/orchestrator/setup bin/workspace-setup]
+    teardown = %w[bin/orchestrator/teardown bin/workspace-teardown]
+
+    run_lifecycle(scenario, "setup #{spec[:hook]}", hook_location, hook_env, setup)
+    spec[:contexts].each { |context, (location, env)| probe_context(scenario, context, location, env) }
+    spec[:main].each do |context|
+      location, env = spec[:contexts].fetch(context)
+      run_lifecycle(scenario, "setup #{context}", location, env, setup)
+    end
+    run_lifecycle(scenario, "teardown #{spec[:hook]}", hook_location, hook_env, teardown)
+    spec[:main].each do |context|
+      location, env = spec[:contexts].fetch(context)
+      run_lifecycle(scenario, "teardown #{context}", location, env, teardown)
+    end
+  end
+
+  # --- observations --------------------------------------------------------
+
+  def read_or_absent(path)
+    File.file?(path) ? File.read(path).split.join(" ") : "absent"
+  end
+
+  def ignored_files(location)
+    dir = location == :wt_subdir ? worktree : location_dir(location)
+    out, = Open3.capture2("git", "-C", dir, "-c", "core.quotePath=false", "ls-files", "--others", "--ignored",
+                          "--exclude-standard")
+    files = out.lines.map(&:chomp).reject { |f| f.empty? || f.start_with?("tmp/WORKSPACE_NAME", ".superset/") }
+    files.empty? ? "none" : files.sort.join(",")
+  end
+
+  def allocations
+    files = Dir.glob(File.join(superset_home, "port-allocations", "*", "*")).select { |f| File.file?(f) }
+    return "none" if files.empty?
+
+    files.map do |f|
+      port, path = File.read(f).lines.map(&:strip)
+      "#{File.basename(File.dirname(f))}:#{port}=#{path}"
+    end.sort.join(",")
+  end
+
+  def row(scenario, step, key, value)
+    @rows << [scenario, step, key, normalize(value.to_s)].join(" | ")
+  end
+
+  def normalize(text)
+    text.gsub(File.join(root, "worktrees-link", WORKTREE_NAME), "<worktree-link>").gsub(worktree, "<worktree>").gsub(main, "<main>").gsub(home, "<home>").gsub(root, "<root>")
+      .gsub(root.delete_prefix("/private"), "<root>")
+  end
+end
+
+def parse(file)
+  rows = {}
+  File.readlines(file, chomp: true).each do |line|
+    next if line.start_with?("#") || line.empty?
+
+    scenario, step, key, value = line.split(" | ", 4)
+    rows[[scenario, step, key]] = value.to_s
+  end
+  rows
+end
+
+def compare(before_file, after_file, allowed, accepted)
+  before = parse(before_file)
+  after = parse(after_file)
+  failures = 0
+  (before.keys | after.keys).each do |k|
+    old = before[k]
+    new = after[k]
+    next if old == new
+
+    label = k.join(" | ")
+    if old.nil? || old == "missing"
+      puts "ADDED    #{label}\n  + #{new}"
+    elsif allowed.include?(k[0]) || accepted.any? { |pattern| pattern.zip(k).all? { |pat, part| File.fnmatch(pat, part.to_s) } }
+      puts "ACCEPTED #{label}\n  - #{old}\n  + #{new.nil? ? '(removed)' : new}"
+    else
+      failures += 1
+      puts "CHANGED  #{label}\n  - #{old}\n  + #{new.nil? ? '(removed)' : new}"
+    end
+  end
+  puts(failures.zero? ? "No unexpected changes." : "#{failures} unexpected change(s).")
+  exit(failures.zero? ? 0 : 1)
+end
+
+command = ARGV.shift
+case command
+when "record"
+  project = ARGV.shift or abort("Usage: orchestrator-check record PROJECT_DIR [--stub NAME]... [--output FILE]")
+  stubs = []
+  output = nil
+  until ARGV.empty?
+    case (arg = ARGV.shift)
+    when "--stub" then stubs << ARGV.shift
+    when "--output" then output = ARGV.shift
+    else abort("Unknown argument: #{arg}")
+    end
+  end
+  report = Recorder.new(project, stubs).run
+  output ? File.write(output, report) : print(report)
+when "compare"
+  before_file = ARGV.shift
+  after_file = ARGV.shift
+  abort("Usage: orchestrator-check compare BEFORE AFTER [--allow SCENARIO]... [--accept FILE]") unless before_file && after_file
+  allowed = []
+  accepted = []
+  until ARGV.empty?
+    case (arg = ARGV.shift)
+    when "--allow" then allowed << ARGV.shift
+    when "--accept"
+      File.readlines(ARGV.shift, chomp: true).each do |line|
+        next if line.start_with?("#") || line.strip.empty?
+
+        accepted << line.split(" | ", 3).map(&:strip)
+      end
+    else abort("Unknown argument: #{arg}")
+    end
+  end
+  compare(before_file, after_file, allowed, accepted)
+else
+  abort("Usage: orchestrator-check record PROJECT_DIR ... | compare BEFORE AFTER ...")
+end

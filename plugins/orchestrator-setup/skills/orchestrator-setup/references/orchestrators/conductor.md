@@ -5,6 +5,10 @@
 
 Conductor is an agent orchestrator that manages git worktrees. It reads shared repository settings from `.conductor/settings.toml`; agents configuring a project must create or update that file instead of asking the user to set lifecycle commands in the Conductor UI.
 
+## Adapter
+
+`bin/orchestrator/adapters/conductor.sh` (managed). Traits: `discover-port` (with no `CONDUCTOR_PORT`, `dev-port` looks for a running puma). Enable it by adding `conductor` to `ORCHESTRATOR_ADAPTERS` in `bin/orchestrator/config`.
+
 ## Environment variables
 
 | Variable | Context | Purpose |

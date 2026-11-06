@@ -1,0 +1,61 @@
+#!/usr/bin/env sh
+# Managed by the orchestrator-setup skill (layout 2). Do not edit: the skill
+# replaces this file wholesale. Project settings live in bin/orchestrator/config.
+#
+# Outputs the dev server port for this workspace. Run from the checkout root.
+#
+# Resolution chain (order matters):
+#   1. a tool-provided port      — any enabled adapter's port var (Conductor,
+#                                  Paseo), detected or not
+#   2. workspace port allocation — active adapter has allocate-ports
+#                                  (Superset, super.engineering, Orca, T3 Code)
+#   3. puma process discovery    — active adapter has discover-port (Conductor)
+#   4. $PORT                     — generic env var
+#   5. ORCHESTRATOR_DEFAULT_PORT — from bin/orchestrator/config (3000)
+#
+# Puma discovery matches process titles like
+#   puma <ver> (tcp://0.0.0.0:<port>) [<workspace folder>]
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+ORCHESTRATOR_DIR="$DIR"
+. "$DIR/env"
+
+discover_puma_port() {
+  ws="$(basename "$PWD")"
+  ps -Ao args= 2>/dev/null | awk -v ws="$ws" '
+    /^puma/ && $0 ~ "\\["ws"\\]" {
+      if (match($0, /tcp:[^:]*:[0-9]+/)) {
+        p = substr($0, RSTART, RLENGTH)
+        sub(/.*:/, "", p)
+        print p
+        exit
+      }
+    }'
+}
+
+if tool_port="$(workspace_tool_port)"; then
+  echo "$tool_port"
+elif workspace_needs_port_allocation; then
+  allocated="$("$DIR/port" get 2>/dev/null || true)"
+  if [ -n "$allocated" ]; then
+    echo "$allocated"
+  else
+    discovered="$(discover_puma_port)"
+    if [ -n "$discovered" ]; then
+      "$DIR/port" reserve "$discovered"
+    else
+      "$DIR/port" allocate
+    fi
+  fi
+elif workspace_has_trait discover-port; then
+  discovered="$(discover_puma_port)"
+  if [ -n "$discovered" ]; then
+    echo "$discovered"
+  else
+    echo "${PORT:-$ORCHESTRATOR_DEFAULT_PORT}"
+  fi
+elif [ -n "${PORT:-}" ]; then
+  echo "$PORT"
+else
+  echo "$ORCHESTRATOR_DEFAULT_PORT"
+fi
