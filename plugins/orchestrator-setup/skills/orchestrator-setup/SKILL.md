@@ -113,12 +113,12 @@ For each selected orchestrator, create or update its project config exactly as i
 | Superset | `.superset/config.json` | `setup`, `teardown`, `run` |
 | super.engineering | `.superconductor/config.json` | `setup`, `teardown`, `run` |
 | Orca | `orca.yaml` | `scripts.setup`, `scripts.archive` |
-| T3 Code | `t3.json` | `scripts[]`: setup (`runOnWorktreeCreate`), dev, manual teardown |
+| T3 Code | `t3.json` | `scripts[]`: setup (`runOnWorktreeCreate`, async), dev, teardown (`runOnSettle`) |
 
 - Write project-scoped config whenever the tool supports it, instead of sending the user to an app UI.
 - Lifecycle key names differ between tools (Orca and Conductor use `archive`).
 - A tool with no dev command in its config gets its config for the hooks it does support. Handle the dev server as its reference file's "Custom dev command" section says.
-- A tool with no teardown hook (T3 Code) gets teardown as a manual action. Never wire teardown to a reversible event such as T3 Code's `runOnSettle`.
+- T3 Code has no worktree-removal hook. Its teardown runs when the thread settles (`runOnSettle`), which marks the thread as done.
 - A tool that runs config only after it's registered in the app (T3 Code) gets registered through its own API when the session has one (`t3_project_*` MCP tools), merged with what the user already saved.
 - Edit other orchestrators' config files only to keep wrappers consistent, and only when the user agrees.
 
@@ -191,7 +191,7 @@ Update `CLAUDE.md` and/or `AGENTS.md` (create a section in `CLAUDE.md` if neithe
 1. Supported orchestrators and their detection variables.
 2. The database scheme and how databases are named.
 3. Dev server startup and port resolution per orchestrator.
-4. Quirks from the reference files (Orca: manual dev server; T3 Code: no teardown hook, actions must be imported).
+4. Quirks from the reference files (Orca: manual dev server; T3 Code: teardown runs on settle, actions must be imported).
 5. That `bin/orchestrator/` managed files are replaced by the orchestrator-setup skill and never edited by hand, and that project settings live in `bin/orchestrator/config`.
 6. If any adapter has the `worktree-include` trait: `.worktreeinclude` is the one list of gitignored files new worktrees get.
 

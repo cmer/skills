@@ -38,7 +38,7 @@ Create or update this project file when T3 Code is selected.
       "command": "<setup command>",
       "icon": "configure",
       "runOnWorktreeCreate": true,
-      "async": false
+      "async": true
     },
     {
       "name": "Dev Server",
@@ -48,7 +48,8 @@ Create or update this project file when T3 Code is selected.
     {
       "name": "Teardown Worktree",
       "command": "<teardown command>",
-      "icon": "configure"
+      "icon": "configure",
+      "runOnSettle": true
     }
   ]
 }
@@ -62,11 +63,11 @@ Script fields:
 | `command` | Shell command, run in a T3 Code terminal at the thread's checkout (the worktree for worktree threads). Required. |
 | `icon` | One of `play`, `test`, `lint`, `configure`, `build`, `debug`. Defaults to `play`. |
 | `runOnWorktreeCreate` | Runs automatically after T3 Code creates a worktree for a new thread. T3 Code uses only the **first** script with this flag. |
-| `async` | For `runOnWorktreeCreate` scripts only. `true` (the default) starts the agent while setup is still running; `false` holds the agent until setup exits. **Use `false` for Rails**, so the agent never runs before `bundle install` and `db:prepare` finish. |
-| `runOnSettle` | Runs in the thread's worktree each time the thread settles. Settling is reversible (un-settle, wake), and the worktree stays on disk. **Never put teardown here**: it would drop the databases of a thread that may come back. |
+| `async` | For `runOnWorktreeCreate` scripts only. `true` (the default) starts the agent while setup is still running; `false` holds the agent until setup exits. **Use `true`**, so the thread is usable at once instead of waiting on `bundle install` and `db:prepare`. Setup's terminal stays open, so its progress and failures are visible. Set `false` only if the user asks to hold the agent until setup finishes. |
+| `runOnSettle` | Runs in the thread's worktree when the thread settles, meaning work on it is done. **Put teardown here**, so a finished thread's databases and port block go away with it. Threads without their own worktree (local mode, the main checkout) skip it, so the shared databases are never touched. If a settled thread is picked up again, run `Setup Worktree` from the actions menu to recreate its databases. |
 | `previewUrl` / `autoOpenPreview` | A fixed URL opened in the desktop app's preview when the script runs. It is static and cannot carry a per-worktree port, so leave it out (see Port strategy). |
 
-Order matters. The first script that is neither setup nor settle becomes the primary action, the one-click button. List `Dev Server` before `Teardown Worktree` so the button starts the server instead of dropping databases.
+Order matters. The first script that is neither setup nor settle becomes the primary action, the one-click button. `Teardown Worktree` is a settle script, so `Dev Server` is the button. Keep `Dev Server` listed before teardown anyway, so the button can never drop databases if someone turns the settle flag off.
 
 `t3.json` can also set `defaultThreadEnvMode` (`"worktree"` or `"local"`). Leave it out unless the user asks: it changes where every new thread starts.
 
@@ -87,15 +88,15 @@ So that setup works without a trip through the UI:
 - The adapter's path must resolve to the same string in every T3 Code context: `T3CODE_WORKTREE_PATH` in actions and worktree terminals, and the git top-level for agent shells, which have no path variable. Normalize both with `pwd -P` so a symlinked worktree location doesn't produce two allocations for one checkout.
 - Detection includes `T3CODE_PROJECT_ROOT` and `T3CODE_THREAD_ID`, which are also set in the main checkout. A dev server started from a main-checkout terminal or local-mode thread therefore gets its own block too. This matches Orca, and it keeps the main checkout from colliding with worktrees on 3000.
 - **No labels file.** T3 Code discovers listening ports itself: its preview panel lists local servers started from its terminals or by its agents, attributed to the thread through the terminal's processes and `T3CODE_THREAD_ID`. Do not write `.superset/ports.json` under T3 Code, and do not set `previewUrl`.
-- No teardown hook means no port release, but nothing leaks: `bin/orchestrator/port allocate` already drops allocations whose workspace path is gone, so blocks from removed worktrees are reclaimed by the next allocation.
+- Teardown on settle releases the block. A worktree removed without settling leaks nothing either: `bin/orchestrator/port allocate` already drops allocations whose workspace path is gone, so its block is reclaimed by the next allocation.
 
 ## Lifecycle
 
 | Lifecycle | T3 Code mechanism |
 |-----------|-------------------|
-| setup | The `runOnWorktreeCreate` action, run in a terminal at the new worktree with `T3CODE_PROJECT_ROOT` and `T3CODE_WORKTREE_PATH` set. Its terminal stays open, so failures are visible. |
+| setup | The `runOnWorktreeCreate` action (`async: true`), run in a terminal at the new worktree with `T3CODE_PROJECT_ROOT` and `T3CODE_WORKTREE_PATH` set. Its terminal stays open, so failures are visible. |
 | dev | A regular action (`Dev Server`), run from the actions menu or its keybinding. |
-| teardown | **None.** T3 Code runs nothing before it removes a worktree, whether you delete it or cleanup policies remove it. Expose teardown as a manual action (`Teardown Worktree`) for the user to run before deleting a thread's worktree, and document that databases of worktrees removed without it are left behind. |
+| teardown | The `runOnSettle` action (`Teardown Worktree`), run in the thread's worktree when the thread settles. It can also be run by hand from the actions menu. T3 Code runs nothing when it removes a worktree, so databases of a worktree deleted without settling its thread are left behind. |
 
 ## `.worktreeinclude`
 

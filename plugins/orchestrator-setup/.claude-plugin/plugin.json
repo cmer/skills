@@ -1,7 +1,7 @@
 {
   "name": "orchestrator-setup",
   "description": "Configure a Rails project for agent orchestrators (Conductor, Superset, Superconductor, Orca, Paseo, T3 Code, and others).",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": {
     "name": "Carl Mercier",
     "email": "foss@carlmercier.com"
